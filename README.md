@@ -6,7 +6,7 @@ Minimal Real-Time Data (RTD) server for Excel, written in C++ with ATL and built
 
 > **Bitness must match Excel** (x64 Excel ⇒ x64 DLL; 32-bit Excel ⇒ Win32 DLL).
 
-### x64
+## x64
 ```bat
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
@@ -16,11 +16,25 @@ cmake --build build --config Release --target register
 cmake --build build --config Release --target unregister
 
 ## Register per-user (no admin)
-  cmake --build build --config Debug --target register
-  :: or: regsvr32 /n /i:user build\Debug\MyRtd.dll
+cmake --build build --config Debug --target register
+:: or: regsvr32 /n /i:user build\Debug\MyRtd.dll
+```
+
+## Make sure DLL is registered
+```bat
+reg query HKCU\Software\Classes\MyCompany.RtdTickCPP /s
+HKEY_CURRENT_USER\Software\Classes\MyCompany.RtdTickCPP\CLSID
+    (Default)    REG_SZ    {C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111}
+    
+reg query HKCU\Software\Classes\CLSID\{C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111}\InprocServer32
+HKEY_CURRENT_USER\Software\Classes\CLSID\{C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111}\InprocServer32
+    (Default)    REG_SZ    E:\GitHub\rtd\cmake-build-debug\Debug\MyRtd.dll
+    ThreadingModel    REG_SZ    Apartment
+```
 
 ## Use in Excel
-Application.RTD.ThrottleInterval = 1000  # Optional 
+Application.RTD.ThrottleInterval = 1000
+
 =RTD("MyCompany.RtdTickCPP",, "RAND1S")
 
 ## Notes
