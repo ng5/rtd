@@ -1,0 +1,36 @@
+import "oaidl.idl";
+import "ocidl.idl";
+
+[
+  uuid(A43788C1-D91B-11D3-8F39-00C04F3651B8),
+  dual, oleautomation
+]
+interface IRTDUpdateEvent : IDispatch {
+  [id(0x0000000a)] HRESULT UpdateNotify();
+  [id(0x0000000b), propget] HRESULT HeartbeatInterval([out, retval] long* value);
+  [id(0x0000000b), propput] HRESULT HeartbeatInterval([in] long value);
+  [id(0x0000000c)] HRESULT Disconnect();
+};
+
+[
+  uuid(EC0E6191-DB51-11D3-8F3E-00C04F3651B8),
+  dual, oleautomation
+]
+interface IRtdServer : IDispatch {
+  [id(0x0000000a)] HRESULT ServerStart([in] IRTDUpdateEvent* callback, [out, retval] long* result);
+  [id(0x0000000b)] HRESULT ConnectData([in] long topicId, [in] SAFEARRAY(VARIANT)* strings,
+                                       [in, out] VARIANT_BOOL* getNewValues, [out, retval] VARIANT* value);
+  [id(0x0000000c)] HRESULT RefreshData([in, out] long* topicCount, [out, retval] SAFEARRAY(VARIANT)* data);
+  [id(0x0000000d)] HRESULT DisconnectData([in] long topicId);
+  [id(0x0000000e)] HRESULT Heartbeat([out, retval] long* result);
+  [id(0x0000000f)] HRESULT ServerTerminate();
+};
+
+[
+  uuid(8E2A1E0A-2E4E-4B69-9C2B-3B9B0F2F1234),
+  version(1.0)
+]
+library RtdTickLib {
+  interface IRTDUpdateEvent;
+  interface IRtdServer;
+};

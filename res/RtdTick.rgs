@@ -1,0 +1,18 @@
+HKCR
+{
+  MyCompany.RtdTickCPP
+  {
+    CLSID = s '{C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111}'
+  }
+  NoRemove CLSID
+  {
+    ForceRemove {C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111} = s 'MyCompany.RtdTickCPP'
+    {
+      InprocServer32 = s '%MODULE%'
+      {
+        val ThreadingModel = s 'Apartment'
+      }
+      ProgID = s 'MyCompany.RtdTickCPP'
+    }
+  }
+}

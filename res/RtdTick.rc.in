@@ -1,0 +1,4 @@
+#include <windows.h>
+#define IDR_RtdTick 101
+1 TYPELIB "@MIDL_TLB_PATH@"
+IDR_RtdTick REGISTRY "@RGS_PATH@"
