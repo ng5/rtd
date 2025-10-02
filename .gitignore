@@ -1,0 +1,15 @@
+/build/
+/build32/
+/CMakeFiles/
+/CMakeCache.txt
+*.pdb
+*.ilk
+*.idb
+*.obj
+*.log
+*.tlog
+*.user
+*.VC.db
+*.sdf
+*.opensdf
+/.vs/
