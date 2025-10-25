@@ -40,6 +40,7 @@ set(SRC
         src/dllmain.cpp
         src/dllmain.h
         src/RtdTick.cpp
+        src/third_party/simdjson.cpp
         ${CMAKE_BINARY_DIR}/RtdTick_gen.rc
         ${MIDL_OUT_DIR}/RtdTickLib_i.c
         MyRtd.def

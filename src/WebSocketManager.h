@@ -10,9 +10,7 @@
 #include <thread>
 #include <atomic>
 #include <memory>
-#include "../src/third_party/json.hpp"
-
-using json = nlohmann::json;
+#include "../src/third_party/simdjson.h"
 
 // Custom window message for websocket updates
 #define WM_WEBSOCKET_DATA (WM_USER + 100)
@@ -213,26 +211,40 @@ private:
                 std::string message((char*)buffer, bytesRead);
 
                 try {
-                    // Parse JSON
-                    json j = json::parse(message);
+                    // Parse JSON with simdjson
+                    simdjson::ondemand::parser parser;
+                    simdjson::padded_string json_str(message);
+                    simdjson::ondemand::document doc = parser.iterate(json_str);
 
                     // Extract value
                     double value = 0.0;
                     std::wstring msgTopic;
 
-                    if (j.contains("topic")) {
-                        std::string topicStr = j["topic"];
-                        msgTopic = std::wstring(topicStr.begin(), topicStr.end());
+                    // Try to get topic field
+                    std::string_view topicView;
+                    auto topicResult = doc["topic"].get_string();
+                    if (!topicResult.error()) {
+                        topicView = topicResult.value();
+                        msgTopic = std::wstring(topicView.begin(), topicView.end());
                     }
 
-                    if (j.contains("value")) {
-                        if (j["value"].is_number()) {
-                            value = j["value"];
-                        } else if (j["value"].is_string()) {
-                            value = std::stod(j["value"].get<std::string>());
+                    // Try to get value field
+                    auto valueResult = doc["value"].get_double();
+                    if (!valueResult.error()) {
+                        value = valueResult.value();
+                    } else {
+                        // Try value as string
+                        auto valueStrResult = doc["value"].get_string();
+                        if (!valueStrResult.error()) {
+                            std::string_view valueStr = valueStrResult.value();
+                            value = std::stod(std::string(valueStr));
+                        } else {
+                            // Try document as direct number
+                            auto numResult = doc.get_double();
+                            if (!numResult.error()) {
+                                value = numResult.value();
+                            }
                         }
-                    } else if (j.is_number()) {
-                        value = j;
                     }
 
                     // Route to all matching topics

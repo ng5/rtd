@@ -87,12 +87,14 @@ The build system uses MIDL (Microsoft Interface Definition Language) compiler to
 - **Message routing**: Incoming messages are routed to all topics matching the filter
 - Uses WinHTTP API for WebSocket protocol (upgrade from HTTP/HTTPS)
 - Each unique URL runs on a dedicated worker thread
-- Parses JSON messages using nlohmann/json library
+- Parses JSON messages using simdjson library with SIMD acceleration
 - Thread-safe with mutex-protected connection and topic maps
 
-**src/third_party/json.hpp**: Single-header JSON library (nlohmann/json v3.12.0)
-- Used for parsing WebSocket messages in JSON format
+**src/third_party/simdjson.h/.cpp**: High-performance JSON library (simdjson)
+- Used for parsing WebSocket messages in JSON format with SIMD acceleration
+- 2-3x faster than nlohmann/json with lower memory usage
 - Supports flexible JSON structures: `{"topic": "...", "value": ...}` or just numeric values
+- Uses ondemand API for efficient streaming parsing
 
 **src/dllmain.cpp/dllmain.h**: ATL module and DLL entry points
 - Defines `CRtdTickModule` ATL module
