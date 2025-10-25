@@ -65,7 +65,18 @@ class WebSocketDataSource : public IDataSource {
     bool Subscribe(long topicId, const TopicParams &params, double &initialValue) override {
         GetLogger().LogSubscription(topicId, params.param1, params.param2);
 
-        m_wsManager.Subscribe(topicId, params.param1, params.param2);
+        // Try to subscribe; WebSocketManager will attempt connection and return false on immediate failure
+        bool ok = m_wsManager.Subscribe(topicId, params.param1, params.param2);
+        if (!ok) {
+            // Build wide string message and log
+            std::wstring msg = L"WEBSOCKET SUBSCRIBE FAILED: URL='";
+            msg += params.param1;
+            msg += L"', Topic='";
+            msg += params.param2;
+            msg += L"'";
+            GetLogger().LogError(msg);
+            return false;
+        }
 
         // WebSocket doesn't have immediate data
         initialValue = 0.0;
