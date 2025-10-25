@@ -245,8 +245,7 @@ class WebSocketManager {
                         PostMessage(notifyWindow, WM_WEBSOCKET_DATA, 0, 0);
                     }
                 } catch (const std::exception &e) {
-                    // GetLogger().LogError(std::string{e.what()});
-                    // JSON parse error - ignore
+                    GetLogger().LogError(e.what());
                 }
             } else if (bufferType == WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE) {
                 break;
@@ -287,9 +286,9 @@ class WebSocketManager {
                 // Convert wide string to UTF-8
                 int len = WideCharToMultiByte(CP_UTF8, 0, topicFilter.c_str(), -1, nullptr, 0, nullptr, nullptr);
                 std::string topicUtf8(len - 1, '\0');
-                WideCharToMultiByte(CP_UTF8, 0, topicFilter.c_str(), -1, &topicUtf8[0], len, nullptr, nullptr);
+                WideCharToMultiByte(CP_UTF8, 0, topicFilter.c_str(), -1, topicUtf8.data(), len, nullptr, nullptr);
 
-                std::string subscribeMsg = "{\"subscribe\":\"" + topicUtf8 + "\"}";
+                std::string subscribeMsg = R"({"subscribe":")" + topicUtf8 + "\"}";
                 WinHttpWebSocketSend(connIt->second->hWebSocket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
                                      PVOID(subscribeMsg.c_str()), static_cast<DWORD>(subscribeMsg.length()));
             }

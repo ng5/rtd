@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <ctime>
 #include <format>
 #include <fstream>
 #include <mutex>
@@ -13,7 +14,19 @@ class Logger {
     std::ofstream m_logFile;
     std::mutex m_mutex;
     bool m_enabled;
-
+    static std::wstring ConvertToWString(const char *str) {
+        if (!str) {
+            return std::wstring();
+        }
+        int len = MultiByteToWideChar(CP_ACP, 0, str, -1, nullptr, 0); // Get the required length
+        if (len == 0) {
+            throw std::runtime_error("Conversion error");
+        }
+        std::wstring wstr(len, L'\0');
+        MultiByteToWideChar(CP_ACP, 0, str, -1, &wstr[0], len);
+        wstr.resize(len - 1); // Remove the null terminator
+        return wstr;
+    }
     static std::wstring GetUserHomeDirectory() {
         wchar_t path[MAX_PATH];
         if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_PROFILE, NULL, 0, path))) {
@@ -82,6 +95,11 @@ class Logger {
             WriteHeader();
         }
     }
+
+    Logger(const Logger &other) = delete;
+    Logger(Logger &&other) noexcept = delete;
+    Logger &operator=(const Logger &other) = delete;
+    Logger &operator=(Logger &&other) noexcept = delete;
 
     ~Logger() {
         if (m_logFile.is_open()) {
@@ -168,17 +186,16 @@ class Logger {
             return;
         LogInfo(L"SERVER_TERMINATE: RTD Server shutting down");
     }
-
     void LogError(const std::wstring &error) {
         if (!m_enabled)
             return;
         std::lock_guard lock(m_mutex);
-
         std::wstring timestamp = GetTimestamp();
         std::wstring logLine = std::format(L"[{}] ERROR: {}\n", timestamp, error);
         m_logFile << WideToUtf8(logLine);
         m_logFile.flush();
     }
+    void LogError(const std::string &error) { LogError(ConvertToWString(error.c_str())); }
 
   private:
     static std::string WideToUtf8(const std::wstring &wstr) {
