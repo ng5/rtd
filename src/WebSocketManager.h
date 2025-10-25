@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <stop_token>
 #include <windows.h>
 #include <winhttp.h>
 
@@ -33,30 +34,57 @@ struct ConnectionData {
     HINTERNET hSession;
     HINTERNET hConnect;
     HINTERNET hWebSocket;
-    std::thread workerThread;
+    std::jthread workerThread;
     std::mutex topicsMutex;
+    std::mutex handlesMutex; // protects hSession/hConnect/hWebSocket
     std::map<long, std::shared_ptr<TopicSubscription>> topics; // topicId -> subscription
 
     ConnectionData() : connected(false), shouldStop(false), hSession(nullptr), hConnect(nullptr), hWebSocket(nullptr) {}
 
     ~ConnectionData() {
         try {
+            // Signal stop cooperatively
             shouldStop = true;
-
-            // Close SESSION handle FIRST - this forcefully aborts all pending operations
-            if (hSession) {
-                WinHttpCloseHandle(hSession);
-                hSession = NULL;
+            try {
+                workerThread.request_stop();
+            } catch (...) {
+                // ignore
             }
 
-            // If the worker thread is still joinable, join it. If we're running in the
-            // worker thread's own context (destructor called on the worker thread),
-            // joining would attempt to join the current thread and cause a crash.
-            // In that case detach the thread object instead to allow destruction.
+            // Close handles under handlesMutex to avoid races with worker
+            {
+                std::lock_guard<std::mutex> hlock(handlesMutex);
+
+                // If WebSocket handle exists, attempt graceful close then close handle
+                if (hWebSocket) {
+                    // Best-effort graceful close; ignore errors
+                    WinHttpWebSocketClose(hWebSocket, 1000, nullptr, 0);
+                    WinHttpCloseHandle(hWebSocket);
+                    hWebSocket = NULL;
+                }
+
+                // Close SESSION handle FIRST - this forcefully aborts all pending operations
+                if (hSession) {
+                    WinHttpCloseHandle(hSession);
+                    hSession = NULL;
+                }
+
+                if (hConnect) {
+                    WinHttpCloseHandle(hConnect);
+                    hConnect = NULL;
+                }
+            }
+
+            // Join worker thread if possible (avoid joining self)
             if (workerThread.joinable()) {
                 if (workerThread.get_id() == std::this_thread::get_id()) {
-                    // Avoid joining self; detach the thread object
-                    workerThread.detach();
+                    // Do not join self; leave the jthread to be destroyed by runtime
+                    // Reset the jthread to avoid join in its destructor here
+                    try {
+                        workerThread = std::jthread();
+                    } catch (...) {
+                        // ignore
+                    }
                 } else {
                     try {
                         workerThread.join();
@@ -64,16 +92,6 @@ struct ConnectionData {
                         // Swallow join exceptions
                     }
                 }
-            }
-
-            // Clean up remaining handles (already invalid but good practice)
-            if (hWebSocket) {
-                WinHttpCloseHandle(hWebSocket);
-                hWebSocket = NULL;
-            }
-            if (hConnect) {
-                WinHttpCloseHandle(hConnect);
-                hConnect = NULL;
             }
         } catch (...) {
             // Swallow exceptions in destructor
@@ -89,7 +107,7 @@ class WebSocketManager {
     HWND m_notifyWindow;
     CComPtr<IRTDUpdateEvent> m_callback;
 
-    static void WebSocketWorker(const std::shared_ptr<ConnectionData> &connData, HWND notifyWindow) {
+    static void WebSocketWorker(std::stop_token stopToken, const std::shared_ptr<ConnectionData> &connData, HWND notifyWindow) {
         // Parse URL
         std::wstring url = connData->url;
         std::wstring host, path;
@@ -120,29 +138,36 @@ class WebSocketManager {
         }
 
         // Initialize WinHTTP
-        connData->hSession =
-            WinHttpOpen(L"RTD WebSocket Client/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
+        HINTERNET hSession = WinHttpOpen(L"RTD WebSocket Client/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr,
+                                         0);
 
-        if (!connData->hSession)
+        if (!hSession)
             return;
 
-        connData->hConnect = WinHttpConnect(connData->hSession, host.c_str(), port, 0);
+        HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), port, 0);
 
-        if (!connData->hConnect)
+        if (!hConnect) {
+            WinHttpCloseHandle(hSession);
             return;
+        }
 
         // Create request for WebSocket
-        HINTERNET hRequest = WinHttpOpenRequest(connData->hConnect, L"GET", path.c_str(), nullptr, nullptr, nullptr,
+        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, nullptr, nullptr,
                                                 isSecure ? WINHTTP_FLAG_SECURE : 0);
 
-        if (!hRequest)
+        if (!hRequest) {
+            WinHttpCloseHandle(hConnect);
+            WinHttpCloseHandle(hSession);
             return;
+        }
 
         // Upgrade to WebSocket
         BOOL result = WinHttpSetOption(hRequest, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0);
 
         if (!result) {
             WinHttpCloseHandle(hRequest);
+            WinHttpCloseHandle(hConnect);
+            WinHttpCloseHandle(hSession);
             return;
         }
 
@@ -151,6 +176,8 @@ class WebSocketManager {
 
         if (!result) {
             WinHttpCloseHandle(hRequest);
+            WinHttpCloseHandle(hConnect);
+            WinHttpCloseHandle(hSession);
             return;
         }
 
@@ -158,15 +185,28 @@ class WebSocketManager {
         result = WinHttpReceiveResponse(hRequest, nullptr);
         if (!result) {
             WinHttpCloseHandle(hRequest);
+            WinHttpCloseHandle(hConnect);
+            WinHttpCloseHandle(hSession);
             return;
         }
 
         // Complete upgrade
-        connData->hWebSocket = WinHttpWebSocketCompleteUpgrade(hRequest, 0);
+        HINTERNET hWebSocket = WinHttpWebSocketCompleteUpgrade(hRequest, 0);
         WinHttpCloseHandle(hRequest);
 
-        if (!connData->hWebSocket)
+        if (!hWebSocket) {
+            WinHttpCloseHandle(hConnect);
+            WinHttpCloseHandle(hSession);
             return;
+        }
+
+        // Store handles into connection data under lock
+        {
+            std::lock_guard<std::mutex> hlock(connData->handlesMutex);
+            connData->hSession = hSession;
+            connData->hConnect = hConnect;
+            connData->hWebSocket = hWebSocket;
+        }
 
         connData->connected = true;
 
@@ -187,8 +227,17 @@ class WebSocketManager {
                                         nullptr);
 
                     std::string subscribeMsg = R"({"subscribe":")" + topicUtf8 + "\"}";
-                    WinHttpWebSocketSend(connData->hWebSocket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
-                                         PVOID(subscribeMsg.c_str()), static_cast<DWORD>(subscribeMsg.length()));
+
+                    // Copy hWebSocket under handle lock to avoid races with shutdown
+                    HINTERNET localWebSocket = nullptr;
+                    {
+                        std::lock_guard<std::mutex> hlock(connData->handlesMutex);
+                        localWebSocket = connData->hWebSocket;
+                    }
+                    if (localWebSocket) {
+                        WinHttpWebSocketSend(localWebSocket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                                             PVOID(subscribeMsg.c_str()), static_cast<DWORD>(subscribeMsg.length()));
+                    }
 
                     sentSubscriptions.insert(val->topicFilter);
                 }
@@ -197,12 +246,19 @@ class WebSocketManager {
 
         // Receive loop
         BYTE buffer[4096];
-        while (!connData->shouldStop) {
+        while (!connData->shouldStop && !stopToken.stop_requested()) {
             DWORD bytesRead = 0;
             WINHTTP_WEB_SOCKET_BUFFER_TYPE bufferType;
 
-            DWORD error =
-                WinHttpWebSocketReceive(connData->hWebSocket, buffer, sizeof(buffer), &bytesRead, &bufferType);
+            HINTERNET localWebSocket = nullptr;
+            {
+                std::lock_guard<std::mutex> hlock(connData->handlesMutex);
+                localWebSocket = connData->hWebSocket;
+            }
+            if (!localWebSocket)
+                break; // no websocket, exit
+
+            DWORD error = WinHttpWebSocketReceive(localWebSocket, buffer, sizeof(buffer), &bytesRead, &bufferType);
 
             if (error != NO_ERROR)
                 break;
@@ -282,6 +338,24 @@ class WebSocketManager {
 
         connData->connected = false;
 
+        // Clean up handles on exit
+        {
+            std::lock_guard<std::mutex> hlock(connData->handlesMutex);
+            if (connData->hWebSocket) {
+                WinHttpWebSocketClose(connData->hWebSocket, 1000, nullptr, 0);
+                WinHttpCloseHandle(connData->hWebSocket);
+                connData->hWebSocket = NULL;
+            }
+            if (connData->hConnect) {
+                WinHttpCloseHandle(connData->hConnect);
+                connData->hConnect = NULL;
+            }
+            if (connData->hSession) {
+                WinHttpCloseHandle(connData->hSession);
+                connData->hSession = NULL;
+            }
+        }
+
         // Log WebSocket disconnection
         GetLogger().LogWebSocketDisconnect(connData->url);
     }
@@ -317,8 +391,17 @@ class WebSocketManager {
                 WideCharToMultiByte(CP_UTF8, 0, topicFilter.c_str(), -1, topicUtf8.data(), len, nullptr, nullptr);
 
                 std::string subscribeMsg = R"({"subscribe":")" + topicUtf8 + "\"}";
-                WinHttpWebSocketSend(connIt->second->hWebSocket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
-                                     PVOID(subscribeMsg.c_str()), static_cast<DWORD>(subscribeMsg.length()));
+
+                // Use a local copy of the websocket handle under lock
+                HINTERNET localWebSocket = nullptr;
+                {
+                    std::lock_guard<std::mutex> hlock(connIt->second->handlesMutex);
+                    localWebSocket = connIt->second->hWebSocket;
+                }
+                if (localWebSocket) {
+                    WinHttpWebSocketSend(localWebSocket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                                         PVOID(subscribeMsg.c_str()), static_cast<DWORD>(subscribeMsg.length()));
+                }
             }
         } else {
             // Create new connection
@@ -332,8 +415,8 @@ class WebSocketManager {
 
             m_connections[url] = connData;
 
-            // Start worker thread
-            connData->workerThread = std::thread(WebSocketWorker, connData, m_notifyWindow);
+            // Start worker thread (std::jthread will provide a stop_token)
+            connData->workerThread = std::jthread(WebSocketWorker, connData, m_notifyWindow);
         }
     }
 
@@ -358,6 +441,29 @@ class WebSocketManager {
                     // If no more topics, signal connection to stop and remove from map.
                     if (connIt->second->topics.empty()) {
                         connIt->second->shouldStop = true;
+                        // Request cooperative stop
+                        try {
+                            connIt->second->workerThread.request_stop();
+                        } catch (...) {
+                        }
+
+                        // Close handles to abort any blocking WinHTTP operations
+                        {
+                            std::lock_guard<std::mutex> hlock(connIt->second->handlesMutex);
+                            if (connIt->second->hWebSocket) {
+                                WinHttpWebSocketClose(connIt->second->hWebSocket, 1000, nullptr, 0);
+                                WinHttpCloseHandle(connIt->second->hWebSocket);
+                                connIt->second->hWebSocket = NULL;
+                            }
+                            if (connIt->second->hSession) {
+                                WinHttpCloseHandle(connIt->second->hSession);
+                                connIt->second->hSession = NULL;
+                            }
+                            if (connIt->second->hConnect) {
+                                WinHttpCloseHandle(connIt->second->hConnect);
+                                connIt->second->hConnect = NULL;
+                            }
+                        }
                         // Take a copy so we can join the thread outside the mutex
                         connToJoin = connIt->second;
                         m_connections.erase(connIt);
@@ -371,7 +477,8 @@ class WebSocketManager {
             try {
                 if (connToJoin->workerThread.joinable()) {
                     if (connToJoin->workerThread.get_id() == std::this_thread::get_id()) {
-                        connToJoin->workerThread.detach();
+                        // Avoid joining self; reset workerThread so destructor won't join here
+                        connToJoin->workerThread = std::jthread();
                     } else {
                         connToJoin->workerThread.join();
                     }
@@ -405,6 +512,28 @@ class WebSocketManager {
             std::lock_guard lock(m_mutex);
             for (auto &val : m_connections | std::views::values) {
                 val->shouldStop = true;
+                // Request cooperative stop
+                try {
+                    val->workerThread.request_stop();
+                } catch (...) {
+                }
+                // Close handles to abort blocking operations
+                {
+                    std::lock_guard<std::mutex> hlock(val->handlesMutex);
+                    if (val->hWebSocket) {
+                        WinHttpWebSocketClose(val->hWebSocket, 1000, nullptr, 0);
+                        WinHttpCloseHandle(val->hWebSocket);
+                        val->hWebSocket = NULL;
+                    }
+                    if (val->hSession) {
+                        WinHttpCloseHandle(val->hSession);
+                        val->hSession = NULL;
+                    }
+                    if (val->hConnect) {
+                        WinHttpCloseHandle(val->hConnect);
+                        val->hConnect = NULL;
+                    }
+                }
                 conns.push_back(val);
             }
             m_connections.clear();
@@ -416,7 +545,7 @@ class WebSocketManager {
             try {
                 if (conn->workerThread.joinable()) {
                     if (conn->workerThread.get_id() == std::this_thread::get_id()) {
-                        conn->workerThread.detach();
+                        conn->workerThread = std::jthread();
                     } else {
                         conn->workerThread.join();
                     }
