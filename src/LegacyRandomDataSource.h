@@ -62,8 +62,8 @@ public:
       if (m_timerWindow.m_hWnd) {
         m_timerWindow.DestroyWindow();
       }
-    } catch (...) {
-      // Swallow exceptions in destructor
+    } catch (const std::exception &e) {
+      GetLogger().LogError(e.what());
     }
   }
 

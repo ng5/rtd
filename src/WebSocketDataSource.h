@@ -45,8 +45,8 @@ class WebSocketDataSource : public IDataSource {
             if (m_notifyWindow.m_hWnd) {
                 m_notifyWindow.DestroyWindow();
             }
-        } catch (...) {
-            // Swallow exceptions in destructor
+        } catch (const std::exception &e) {
+            GetLogger().LogError(e.what());
         }
     }
 

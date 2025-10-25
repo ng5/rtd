@@ -160,8 +160,8 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
 
             // Just signal shutdown - let FinalRelease do the actual cleanup
             m_stopping = true;
-        } catch (...) {
-            // Swallow all exceptions - don't let them propagate to Excel
+        } catch (const std::exception &e) {
+            GetLogger().LogError(e.what());
         }
 
         return S_OK;
@@ -175,28 +175,28 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
             for (auto &source : m_dataSources) {
                 try {
                     source->Shutdown();
-                } catch (...) {
-                    // Continue shutting down other sources even if one fails
+                } catch (const std::exception &e) {
+                    GetLogger().LogError(e.what());
                 }
             }
 
             // Clear data structures (unique_ptr destructors will destroy windows)
             try {
                 m_dataSources.clear();
-            } catch (...) {
-                // Ignore cleanup errors
+            } catch (const std::exception &e) {
+                GetLogger().LogError(e.what());
             }
 
             try {
                 m_topicSources.clear();
-            } catch (...) {
-                // Ignore cleanup errors
+            } catch (const std::exception &e) {
+                GetLogger().LogError(e.what());
             }
 
             // Callback will be released automatically by CComPtr destructor
             // No need to manually release it
-        } catch (...) {
-            // Swallow all exceptions - don't let them crash Excel
+        } catch (const std::exception &e) {
+            GetLogger().LogError(e.what());
         }
     }
 
@@ -217,8 +217,8 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
                 if (!m_stopping && m_callback) {
                     m_callback->UpdateNotify();
                 }
-            } catch (...) {
-                // Swallow exceptions - don't crash if Excel is shutting down
+            } catch (const std::exception &e) {
+                GetLogger().LogError(e.what());
             }
         };
 
