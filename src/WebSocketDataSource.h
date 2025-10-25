@@ -41,6 +41,9 @@ class WebSocketDataSource : public IDataSource {
             // Ensure manager is shutdown
             m_wsManager.Shutdown();
 
+            // Clear notify window in manager to avoid postings to a destroyed window
+            m_wsManager.SetNotifyWindow(nullptr);
+
             // Destroy the notification window
             if (m_notifyWindow.m_hWnd) {
                 m_notifyWindow.DestroyWindow();
@@ -83,7 +86,7 @@ class WebSocketDataSource : public IDataSource {
 
         for (auto &[fst, snd] : wsUpdates) {
             if (snd.vt == VT_R8) {
-                TopicUpdate update;
+                TopicUpdate update{};
                 update.topicId = fst;
                 update.value = snd.dblVal;
                 updates.push_back(update);

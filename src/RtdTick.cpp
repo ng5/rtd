@@ -6,10 +6,9 @@
 #include "resource.h"
 #include <atlbase.h>
 #include <atlcom.h>
-#include <atlctl.h>
 #include <atlsafe.h>
-#include <atlwin.h>
 #include <atomic>
+#include <exception>
 #include <map>
 #include <memory>
 #include <vector>
@@ -115,7 +114,7 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
             vTopic.vt = VT_I4;
             vTopic.lVal = topicId;
 
-            LONG idx[2];
+            LONG idx[2] = {};
             idx[0] = 0;
             idx[1] = col;
             sa.MultiDimSetAt(idx, vTopic);

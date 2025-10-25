@@ -2,13 +2,12 @@
 #include "../src/third_party/simdjson.h"
 #include "Logger.h"
 #include <atlbase.h>
-#include <atlcom.h>
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <set>
-#include <stop_token>
 #include <string>
 #include <thread>
 #include <windows.h>
@@ -53,25 +52,25 @@ struct ConnectionData {
 
             // Close handles under handlesMutex to avoid races with worker
             {
-                std::lock_guard<std::mutex> hlock(handlesMutex);
+                std::lock_guard hlock(handlesMutex);
 
                 // If WebSocket handle exists, attempt graceful close then close handle
                 if (hWebSocket) {
                     // Best-effort graceful close; ignore errors
                     WinHttpWebSocketClose(hWebSocket, 1000, nullptr, 0);
                     WinHttpCloseHandle(hWebSocket);
-                    hWebSocket = NULL;
+                    hWebSocket = nullptr;
                 }
 
                 // Close SESSION handle FIRST - this forcefully aborts all pending operations
                 if (hSession) {
                     WinHttpCloseHandle(hSession);
-                    hSession = NULL;
+                    hSession = nullptr;
                 }
 
                 if (hConnect) {
                     WinHttpCloseHandle(hConnect);
-                    hConnect = NULL;
+                    hConnect = nullptr;
                 }
             }
 
@@ -104,11 +103,21 @@ class WebSocketManager {
     std::map<std::wstring, std::shared_ptr<ConnectionData>> m_connections; // url -> connection
     std::map<long, std::wstring> m_topicToUrl;                             // topicId -> url
     std::mutex m_mutex;
-    HWND m_notifyWindow;
+    std::atomic<HWND> m_notifyWindow{nullptr};
     CComPtr<IRTDUpdateEvent> m_callback;
 
-    static void WebSocketWorker(std::stop_token stopToken, const std::shared_ptr<ConnectionData> &connData,
-                                HWND notifyWindow) {
+    static bool WaitForWorkerExit(const std::shared_ptr<ConnectionData> &conn, std::chrono::milliseconds timeout) {
+        auto start = std::chrono::steady_clock::now();
+        while (conn->connected) {
+            if (std::chrono::steady_clock::now() - start > timeout)
+                return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return true;
+    }
+
+    // Worker no longer takes std::stop_token (compatibility)
+    static void WebSocketWorker(const std::shared_ptr<ConnectionData> &connData, HWND notifyWindow) {
         // Parse URL
         std::wstring url = connData->url;
         std::wstring host, path;
@@ -203,7 +212,7 @@ class WebSocketManager {
 
         // Store handles into connection data under lock
         {
-            std::lock_guard<std::mutex> hlock(connData->handlesMutex);
+            std::lock_guard hlock(connData->handlesMutex);
             connData->hSession = hSession;
             connData->hConnect = hConnect;
             connData->hWebSocket = hWebSocket;
@@ -232,7 +241,7 @@ class WebSocketManager {
                     // Copy hWebSocket under handle lock to avoid races with shutdown
                     HINTERNET localWebSocket = nullptr;
                     {
-                        std::lock_guard<std::mutex> hlock(connData->handlesMutex);
+                        std::lock_guard hlock(connData->handlesMutex);
                         localWebSocket = connData->hWebSocket;
                     }
                     if (localWebSocket) {
@@ -246,14 +255,14 @@ class WebSocketManager {
         }
 
         // Receive loop
-        BYTE buffer[4096];
-        while (!connData->shouldStop && !stopToken.stop_requested()) {
+        BYTE buffer[4096] = {};
+        while (!connData->shouldStop) {
             DWORD bytesRead = 0;
             WINHTTP_WEB_SOCKET_BUFFER_TYPE bufferType;
 
             HINTERNET localWebSocket = nullptr;
             {
-                std::lock_guard<std::mutex> hlock(connData->handlesMutex);
+                std::lock_guard hlock(connData->handlesMutex);
                 localWebSocket = connData->hWebSocket;
             }
             if (!localWebSocket)
@@ -326,8 +335,9 @@ class WebSocketManager {
                     }
 
                     // Notify if any topic was updated
-                    if (anyUpdate && notifyWindow && IsWindow(notifyWindow)) {
-                        PostMessage(notifyWindow, WM_WEBSOCKET_DATA, 0, 0);
+                    HWND hwnd = notifyWindow;
+                    if (anyUpdate && hwnd && IsWindow(hwnd)) {
+                        PostMessage(hwnd, WM_WEBSOCKET_DATA, 0, 0);
                     }
                 } catch (const std::exception &e) {
                     GetLogger().LogError(e.what());
@@ -341,7 +351,7 @@ class WebSocketManager {
 
         // Clean up handles on exit
         {
-            std::lock_guard<std::mutex> hlock(connData->handlesMutex);
+            std::lock_guard hlock(connData->handlesMutex);
             if (connData->hWebSocket) {
                 WinHttpWebSocketClose(connData->hWebSocket, 1000, nullptr, 0);
                 WinHttpCloseHandle(connData->hWebSocket);
@@ -362,200 +372,224 @@ class WebSocketManager {
     }
 
   public:
-    WebSocketManager() : m_notifyWindow(nullptr) {}
+    WebSocketManager() {}
 
-    void SetNotifyWindow(HWND hwnd) { m_notifyWindow = hwnd; }
+    void SetNotifyWindow(HWND hwnd) { m_notifyWindow.store(hwnd, std::memory_order_relaxed); }
 
     void SetCallback(IRTDUpdateEvent *callback) { m_callback = callback; }
 
     void Subscribe(long topicId, const std::wstring &url, const std::wstring &topicFilter) {
-        std::lock_guard lock(m_mutex);
+        try {
+            std::lock_guard lock(m_mutex);
 
-        // Create subscription
-        auto subscription = std::make_shared<TopicSubscription>();
-        subscription->topicFilter = topicFilter;
+            // Create subscription
+            auto subscription = std::make_shared<TopicSubscription>();
+            subscription->topicFilter = topicFilter;
 
-        // Track which URL this topic belongs to
-        m_topicToUrl[topicId] = url;
+            // Track which URL this topic belongs to
+            m_topicToUrl[topicId] = url;
 
-        // Check if we already have a connection for this URL
-        if (auto connIt = m_connections.find(url); connIt != m_connections.end()) {
-            // Add topic to existing connection
-            std::lock_guard topicLock(connIt->second->topicsMutex);
-            connIt->second->topics[topicId] = subscription;
+            // Check if we already have a connection for this URL
+            if (auto connIt = m_connections.find(url); connIt != m_connections.end()) {
+                // Add topic to existing connection
+                std::lock_guard topicLock(connIt->second->topicsMutex);
+                connIt->second->topics[topicId] = subscription;
 
-            // Send subscription message if connected
-            if (connIt->second->connected && !topicFilter.empty()) {
-                // Convert wide string to UTF-8
-                int len = WideCharToMultiByte(CP_UTF8, 0, topicFilter.c_str(), -1, nullptr, 0, nullptr, nullptr);
-                std::string topicUtf8(len - 1, '\0');
-                WideCharToMultiByte(CP_UTF8, 0, topicFilter.c_str(), -1, topicUtf8.data(), len, nullptr, nullptr);
+                // Send subscription message if connected
+                if (connIt->second->connected && !topicFilter.empty()) {
+                    // Convert wide string to UTF-8
+                    int len = WideCharToMultiByte(CP_UTF8, 0, topicFilter.c_str(), -1, nullptr, 0, nullptr, nullptr);
+                    std::string topicUtf8(len - 1, '\0');
+                    WideCharToMultiByte(CP_UTF8, 0, topicFilter.c_str(), -1, topicUtf8.data(), len, nullptr, nullptr);
 
-                std::string subscribeMsg = R"({"subscribe":")" + topicUtf8 + "\"}";
+                    std::string subscribeMsg = R"({"subscribe":")" + topicUtf8 + "\"}";
 
-                // Use a local copy of the websocket handle under lock
-                HINTERNET localWebSocket = nullptr;
+                    // Use a local copy of the websocket handle under lock
+                    HINTERNET localWebSocket = nullptr;
+                    {
+                        std::lock_guard hlock(connIt->second->handlesMutex);
+                        localWebSocket = connIt->second->hWebSocket;
+                    }
+                    if (localWebSocket) {
+                        WinHttpWebSocketSend(localWebSocket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                                             PVOID(subscribeMsg.c_str()), static_cast<DWORD>(subscribeMsg.length()));
+                    }
+                }
+            } else {
+                // Create new connection
+                auto connData = std::make_shared<ConnectionData>();
+                connData->url = url;
+
                 {
-                    std::lock_guard<std::mutex> hlock(connIt->second->handlesMutex);
-                    localWebSocket = connIt->second->hWebSocket;
+                    std::lock_guard topicLock(connData->topicsMutex);
+                    connData->topics[topicId] = subscription;
                 }
-                if (localWebSocket) {
-                    WinHttpWebSocketSend(localWebSocket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
-                                         PVOID(subscribeMsg.c_str()), static_cast<DWORD>(subscribeMsg.length()));
-                }
+
+                m_connections[url] = connData;
+
+                // Start worker thread (std::jthread will provide a stop_token)
+                HWND hwnd = m_notifyWindow.load(std::memory_order_relaxed);
+                connData->workerThread = std::jthread(WebSocketWorker, connData, hwnd);
             }
-        } else {
-            // Create new connection
-            auto connData = std::make_shared<ConnectionData>();
-            connData->url = url;
-
-            {
-                std::lock_guard topicLock(connData->topicsMutex);
-                connData->topics[topicId] = subscription;
-            }
-
-            m_connections[url] = connData;
-
-            // Start worker thread (std::jthread will provide a stop_token)
-            connData->workerThread = std::jthread(WebSocketWorker, connData, m_notifyWindow);
+        } catch (const std::exception &e) {
+            GetLogger().LogError(e.what());
         }
     }
 
     void Unsubscribe(long topicId) {
-        std::shared_ptr<ConnectionData> connToJoin = nullptr;
+        try {
+            std::shared_ptr<ConnectionData> connToJoin = nullptr;
 
-        {
-            std::lock_guard lock(m_mutex);
+            {
+                std::lock_guard lock(m_mutex);
 
-            auto urlIt = m_topicToUrl.find(topicId);
-            if (urlIt == m_topicToUrl.end())
-                return;
+                auto urlIt = m_topicToUrl.find(topicId);
+                if (urlIt == m_topicToUrl.end())
+                    return;
 
-            std::wstring url = urlIt->second;
-            m_topicToUrl.erase(urlIt);
+                std::wstring url = urlIt->second;
+                m_topicToUrl.erase(urlIt);
 
-            if (auto connIt = m_connections.find(url); connIt != m_connections.end()) {
-                {
-                    std::lock_guard topicLock(connIt->second->topicsMutex);
-                    connIt->second->topics.erase(topicId);
+                if (auto connIt = m_connections.find(url); connIt != m_connections.end()) {
+                    {
+                        std::lock_guard topicLock(connIt->second->topicsMutex);
+                        connIt->second->topics.erase(topicId);
 
-                    // If no more topics, signal connection to stop and remove from map.
-                    if (connIt->second->topics.empty()) {
-                        connIt->second->shouldStop = true;
-                        // Request cooperative stop
-                        try {
-                            connIt->second->workerThread.request_stop();
-                        } catch (const std::exception &e) {
-                            GetLogger().LogError(e.what());
+                        // If no more topics, signal connection to stop and remove from map.
+                        if (connIt->second->topics.empty()) {
+                            connIt->second->shouldStop = true;
+                            // Request cooperative stop
+                            try {
+                                connIt->second->workerThread.request_stop();
+                            } catch (const std::exception &e) {
+                                GetLogger().LogError(e.what());
+                            }
+
+                            // Close handles to abort any blocking WinHTTP operations
+                            {
+                                std::lock_guard hlock(connIt->second->handlesMutex);
+                                if (connIt->second->hWebSocket) {
+                                    WinHttpWebSocketClose(connIt->second->hWebSocket, 1000, nullptr, 0);
+                                    WinHttpCloseHandle(connIt->second->hWebSocket);
+                                    connIt->second->hWebSocket = nullptr;
+                                }
+                                if (connIt->second->hSession) {
+                                    WinHttpCloseHandle(connIt->second->hSession);
+                                    connIt->second->hSession = nullptr;
+                                }
+                                if (connIt->second->hConnect) {
+                                    WinHttpCloseHandle(connIt->second->hConnect);
+                                    connIt->second->hConnect = nullptr;
+                                }
+                            }
+                            // Take a copy so we can join the thread outside the mutex
+                            connToJoin = connIt->second;
+                            m_connections.erase(connIt);
                         }
-
-                        // Close handles to abort any blocking WinHTTP operations
-                        {
-                            std::lock_guard<std::mutex> hlock(connIt->second->handlesMutex);
-                            if (connIt->second->hWebSocket) {
-                                WinHttpWebSocketClose(connIt->second->hWebSocket, 1000, nullptr, 0);
-                                WinHttpCloseHandle(connIt->second->hWebSocket);
-                                connIt->second->hWebSocket = nullptr;
-                            }
-                            if (connIt->second->hSession) {
-                                WinHttpCloseHandle(connIt->second->hSession);
-                                connIt->second->hSession = nullptr;
-                            }
-                            if (connIt->second->hConnect) {
-                                WinHttpCloseHandle(connIt->second->hConnect);
-                                connIt->second->hConnect = nullptr;
-                            }
-                        }
-                        // Take a copy so we can join the thread outside the mutex
-                        connToJoin = connIt->second;
-                        m_connections.erase(connIt);
                     }
                 }
             }
-        }
 
-        // Join the worker thread outside of the mutex to avoid deadlocks.
-        if (connToJoin) {
-            try {
-                if (connToJoin->workerThread.joinable()) {
-                    if (connToJoin->workerThread.get_id() == std::this_thread::get_id()) {
-                        // Avoid joining self; reset workerThread so destructor won't join here
-                        connToJoin->workerThread = std::jthread();
-                    } else {
-                        connToJoin->workerThread.join();
+            // Join the worker thread outside the mutex to avoid deadlocks.
+            if (connToJoin) {
+                try {
+                    // Wait for worker to acknowledge shutdown up to2 seconds
+                    if (bool exited = WaitForWorkerExit(connToJoin, std::chrono::milliseconds(2000)); !exited) {
+                        GetLogger().LogError(std::string("Worker did not exit in time"));
                     }
+                    if (connToJoin->workerThread.joinable()) {
+                        if (connToJoin->workerThread.get_id() == std::this_thread::get_id()) {
+                            // Avoid joining self; reset workerThread so destructor won't join here
+                            connToJoin->workerThread = std::jthread();
+                        } else {
+                            connToJoin->workerThread.join();
+                        }
+                    }
+                } catch (const std::exception &e) {
+                    GetLogger().LogError(e.what());
                 }
-            } catch (const std::exception &e) {
-                GetLogger().LogError(e.what());
             }
+        } catch (const std::exception &e) {
+            GetLogger().LogError(e.what());
         }
     }
 
     void GetAllNewData(std::map<long, VARIANT> &updates) {
-        std::lock_guard lock(m_mutex);
-
-        for (auto &val : m_connections | std::views::values) {
-            std::lock_guard topicLock(val->topicsMutex);
-            for (auto &[fst, snd] : val->topics) {
-                if (snd->hasNewData) {
-                    VARIANT v;
-                    VariantInit(&v);
-                    VariantCopy(&v, &snd->cachedValue);
-                    updates[fst] = v;
-                    snd->hasNewData = false;
+        try {
+            std::lock_guard lock(m_mutex);
+            for (auto &val : m_connections | std::views::values) {
+                std::lock_guard topicLock(val->topicsMutex);
+                for (auto &[fst, snd] : val->topics) {
+                    if (snd->hasNewData) {
+                        VARIANT v;
+                        VariantInit(&v);
+                        VariantCopy(&v, &snd->cachedValue);
+                        updates[fst] = v;
+                        snd->hasNewData = false;
+                    }
                 }
             }
+        } catch (const std::exception &e) {
+            GetLogger().LogError(e.what());
         }
     }
 
     void Shutdown() {
-        std::vector<std::shared_ptr<ConnectionData>> conns;
-        {
-            std::lock_guard lock(m_mutex);
-            for (auto &val : m_connections | std::views::values) {
-                val->shouldStop = true;
-                // Request cooperative stop
+        try {
+            std::vector<std::shared_ptr<ConnectionData>> conns;
+            {
+                std::lock_guard lock(m_mutex);
+                for (auto &val : m_connections | std::views::values) {
+                    val->shouldStop = true;
+                    // Request cooperative stop
+                    try {
+                        val->workerThread.request_stop();
+                    } catch (const std::exception &e) {
+                        GetLogger().LogError(e.what());
+                    }
+                    // Close handles to abort blocking operations
+                    {
+                        std::lock_guard hlock(val->handlesMutex);
+                        if (val->hWebSocket) {
+                            WinHttpWebSocketClose(val->hWebSocket, 1000, nullptr, 0);
+                            WinHttpCloseHandle(val->hWebSocket);
+                            val->hWebSocket = nullptr;
+                        }
+                        if (val->hSession) {
+                            WinHttpCloseHandle(val->hSession);
+                            val->hSession = nullptr;
+                        }
+                        if (val->hConnect) {
+                            WinHttpCloseHandle(val->hConnect);
+                            val->hConnect = nullptr;
+                        }
+                    }
+                    conns.push_back(val);
+                }
+                m_connections.clear();
+                m_topicToUrl.clear();
+            }
+
+            // Join worker threads outside the mutex
+            for (auto &conn : conns) {
                 try {
-                    val->workerThread.request_stop();
+                    if (bool exited = WaitForWorkerExit(conn, std::chrono::milliseconds(2000)); !exited) {
+                        GetLogger().LogError(std::string("Worker did not exit in time"));
+                    }
+
+                    if (conn->workerThread.joinable()) {
+                        if (conn->workerThread.get_id() == std::this_thread::get_id()) {
+                            conn->workerThread = std::jthread();
+                        } else {
+                            conn->workerThread.join();
+                        }
+                    }
                 } catch (const std::exception &e) {
                     GetLogger().LogError(e.what());
                 }
-                // Close handles to abort blocking operations
-                {
-                    std::lock_guard<std::mutex> hlock(val->handlesMutex);
-                    if (val->hWebSocket) {
-                        WinHttpWebSocketClose(val->hWebSocket, 1000, nullptr, 0);
-                        WinHttpCloseHandle(val->hWebSocket);
-                        val->hWebSocket = nullptr;
-                    }
-                    if (val->hSession) {
-                        WinHttpCloseHandle(val->hSession);
-                        val->hSession = nullptr;
-                    }
-                    if (val->hConnect) {
-                        WinHttpCloseHandle(val->hConnect);
-                        val->hConnect = nullptr;
-                    }
-                }
-                conns.push_back(val);
             }
-            m_connections.clear();
-            m_topicToUrl.clear();
-        }
-
-        // Join worker threads outside the mutex
-        for (auto &conn : conns) {
-            try {
-                if (conn->workerThread.joinable()) {
-                    if (conn->workerThread.get_id() == std::this_thread::get_id()) {
-                        conn->workerThread = std::jthread();
-                    } else {
-                        conn->workerThread.join();
-                    }
-                }
-            } catch (const std::exception &e) {
-                GetLogger().LogError(e.what());
-            }
+        } catch (const std::exception &e) {
+            GetLogger().LogError(e.what());
         }
     }
 };
