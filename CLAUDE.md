@@ -14,7 +14,9 @@ Key features:
 
 ## Build System
 
-This project uses CMake with Visual Studio 2022 as the generator. There are two CMake presets defined:
+This project uses CMake with Visual Studio 2022 as the generator and **C++23** standard for modern features like `std::format`.
+
+CMake presets:
 - `x64-debug`: Debug build for x64 architecture
 - `x64-release`: Release build for x64 architecture
 
@@ -95,6 +97,14 @@ The build system uses MIDL (Microsoft Interface Definition Language) compiler to
 - 2-3x faster than nlohmann/json with lower memory usage
 - Supports flexible JSON structures: `{"topic": "...", "value": ...}` or just numeric values
 - Uses ondemand API for efficient streaming parsing
+
+**src/Logger.h**: Logging utility for debugging and monitoring
+- Thread-safe logging using `std::mutex`
+- Uses C++23 `std::format` for efficient string formatting
+- Logs written to `%USERPROFILE%\RTDLogs\RTD_YYYYMMDD_HHMMSS.log`
+- Automatically creates RTDLogs folder on first use
+- Logs all subscription, data reception, and connection events
+- New log file created for each RTD server session
 
 **src/dllmain.cpp/dllmain.h**: ATL module and DLL entry points
 - Defines `CRtdTickModule` ATL module
@@ -198,6 +208,47 @@ The server expects JSON messages with the following structure:
 ```
 
 The `value` field can be a number or a string that can be parsed as a number.
+
+## Logging
+
+The RTD server automatically logs all activity to help with debugging and monitoring:
+
+### Log Location
+- **Path**: `C:\Users\<YourUsername>\RTDLogs\RTD_YYYYMMDD_HHMMSS.log`
+- **Format**: Plain text with timestamps
+- **Created**: Automatically on first RTD server initialization
+- **Session**: New log file for each Excel session
+
+### What Gets Logged
+- **SERVER_START**: When Excel initializes the RTD server
+- **SUBSCRIBE**: When Excel cell subscribes to a topic (legacy or WebSocket)
+- **WEBSOCKET_CONNECT**: When WebSocket connection is established
+- **DATA_RECEIVED**: Every time data is sent to Excel (with TopicID, Value, Source)
+- **WEBSOCKET_DISCONNECT**: When WebSocket connection closes
+- **UNSUBSCRIBE**: When Excel cell stops requesting data
+- **SERVER_TERMINATE**: When RTD server shuts down
+- **ERROR**: Any errors encountered
+
+### Log Format Example
+```
+========================================
+RTD Server Log - Session Started
+Timestamp: 2025-10-25 13:45:23.456
+========================================
+
+[2025-10-25 13:45:23.456] INFO: SERVER_START: RTD Server initialized
+[2025-10-25 13:45:24.123] INFO: SUBSCRIBE: TopicID=1, URL='ws://localhost:8080', Topic='BTC'
+[2025-10-25 13:45:24.234] INFO: WEBSOCKET_CONNECT: URL='ws://localhost:8080'
+[2025-10-25 13:45:25.345] INFO: DATA_RECEIVED: TopicID=1, Value=45234.5678, Source='WebSocket'
+[2025-10-25 13:45:26.456] INFO: SUBSCRIBE: TopicID=2, Mode=LEGACY, Param='RAND1S'
+[2025-10-25 13:45:27.567] INFO: DATA_RECEIVED: TopicID=2, Value=87.6543, Source='Legacy'
+```
+
+### Enabling Raw Message Logging
+To log every WebSocket message (useful for debugging), uncomment this line in `src/WebSocketManager.h:218`:
+```cpp
+GetLogger().LogWebSocketMessage(connData->url, message);
+```
 
 ## Key Implementation Details
 

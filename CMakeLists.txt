@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 project(RtdTickCPP LANGUAGES C CXX RC)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_definitions(UNICODE _UNICODE _WIN32_WINNT=0x0601)
 

@@ -12,6 +12,7 @@
 #include "resource.h"
 #include "RtdTickLib_i.h"
 #include "WebSocketManager.h"
+#include "Logger.h"
 
 class NotifyWindow : public CWindowImpl<NotifyWindow, CWindow, CWinTraits<> > {
   CComPtr<IRTDUpdateEvent> m_cb;
@@ -64,6 +65,9 @@ public:
     if (!result) return E_POINTER;
     m_stopping = false;
     m_cb = cb;
+
+    // Log server start
+    GetLogger().LogServerStart();
 
     // Create notification window for both websocket and timer callbacks
     if (m_notifyWindow.CreateNow()) {
@@ -121,6 +125,10 @@ public:
     if (isWebSocket) {
       // WebSocket mode
       m_topicIds.insert(topicId);
+
+      // Log subscription
+      GetLogger().LogSubscription(topicId, firstParam, secondParam);
+
       m_wsManager.Subscribe(topicId, firstParam, secondParam);
 
       if (getNewValues) *getNewValues = VARIANT_TRUE; // wait for data
@@ -130,6 +138,9 @@ public:
       // Legacy mode - random numbers with timer
       m_legacyTopics.insert(topicId);
       m_topicIds.insert(topicId);
+
+      // Log subscription
+      GetLogger().LogSubscription(topicId, firstParam, L"");
 
       // Start timer if this is the first legacy topic
       if (m_legacyTopics.size() == 1) {
@@ -192,6 +203,12 @@ public:
       idx[0] = 1;  // row 1 = value
       sa.MultiDimSetAt(idx, pair.second);
 
+      // Log data being sent to Excel
+      if (pair.second.vt == VT_R8) {
+        std::wstring source = m_legacyTopics.count(pair.first) > 0 ? L"Legacy" : L"WebSocket";
+        GetLogger().LogDataReceived(pair.first, pair.second.dblVal, source);
+      }
+
       VariantClear(&pair.second);
       col++;
     }
@@ -203,6 +220,9 @@ public:
   }
 
   STDMETHOD(DisconnectData)(long topicId) override {
+    // Log unsubscribe
+    GetLogger().LogUnsubscribe(topicId);
+
     // Remove from WebSocket manager
     m_wsManager.Unsubscribe(topicId);
 
@@ -225,6 +245,9 @@ public:
   }
 
   STDMETHOD(ServerTerminate)() override {
+    // Log server terminate
+    GetLogger().LogServerTerminate();
+
     m_stopping = true;
     m_notifyWindow.StopTimer();
     m_wsManager.Shutdown();

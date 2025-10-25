@@ -11,6 +11,7 @@
 #include <atomic>
 #include <memory>
 #include "../src/third_party/simdjson.h"
+#include "Logger.h"
 
 // Custom window message for websocket updates
 #define WM_WEBSOCKET_DATA (WM_USER + 100)
@@ -166,6 +167,9 @@ private:
 
         connData->connected = true;
 
+        // Log WebSocket connection
+        GetLogger().LogWebSocketConnect(connData->url);
+
         // Send subscription messages for all topics
         {
             std::lock_guard<std::mutex> lock(connData->topicsMutex);
@@ -209,6 +213,9 @@ private:
                 bufferType == WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE) {
 
                 std::string message((char*)buffer, bytesRead);
+
+                // Log incoming WebSocket message (optional - can be commented out for production)
+                // GetLogger().LogWebSocketMessage(connData->url, message);
 
                 try {
                     // Parse JSON with simdjson
@@ -279,6 +286,9 @@ private:
         }
 
         connData->connected = false;
+
+        // Log WebSocket disconnection
+        GetLogger().LogWebSocketDisconnect(connData->url);
     }
 
 public:
