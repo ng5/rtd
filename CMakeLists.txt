@@ -53,7 +53,7 @@ target_include_directories(RtdTickCPP PRIVATE
         ${CMAKE_SOURCE_DIR}/res
 )
 
-target_link_libraries(RtdTickCPP PRIVATE ole32 oleaut32 uuid user32)
+target_link_libraries(RtdTickCPP PRIVATE ole32 oleaut32 uuid user32 winhttp)
 
 set_target_properties(RtdTickCPP PROPERTIES OUTPUT_NAME "MyRtd")
 

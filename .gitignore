@@ -13,3 +13,4 @@
 *.sdf
 *.opensdf
 /.vs/
+node_modules

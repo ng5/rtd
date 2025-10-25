@@ -1,0 +1,15 @@
+{
+  "name": "rtd-websocket-test-server",
+  "version": "1.0.0",
+  "description": "WebSocket test server for Excel RTD",
+  "main": "test-ws-server.js",
+  "scripts": {
+    "start": "node test-ws-server.js"
+  },
+  "keywords": ["websocket", "rtd", "excel"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

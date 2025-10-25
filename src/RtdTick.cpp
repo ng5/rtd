@@ -5,17 +5,21 @@
 #include <atlctl.h>
 #include <atlwin.h>
 #include <atlsafe.h>
-#include <random>
 #include <atomic>
+#include <map>
+#include <set>
+#include <random>
 #include "resource.h"
 #include "RtdTickLib_i.h"
+#include "WebSocketManager.h"
 
-class TimerWindow : public CWindowImpl<TimerWindow, CWindow, CWinTraits<> > {
+class NotifyWindow : public CWindowImpl<NotifyWindow, CWindow, CWinTraits<> > {
   CComPtr<IRTDUpdateEvent> m_cb;
   std::atomic<bool> *m_stoppingFlag = nullptr;
 
 public:
-  BEGIN_MSG_MAP(TimerWindow)
+  BEGIN_MSG_MAP(NotifyWindow)
+      MESSAGE_HANDLER(WM_WEBSOCKET_DATA, OnWebSocketData)
       MESSAGE_HANDLER(WM_TIMER, OnTimer)
   END_MSG_MAP()
 
@@ -25,11 +29,16 @@ public:
   }
 
   BOOL CreateNow() { return Create(nullptr) != nullptr; }
-  void Start(UINT ms) { if (m_hWnd) SetTimer(1, ms); }
-  void Stop() { if (m_hWnd) KillTimer(1); }
+  void StartTimer(UINT ms) { if (m_hWnd) SetTimer(1, ms); }
+  void StopTimer() { if (m_hWnd) KillTimer(1); }
+
+  LRESULT OnWebSocketData(UINT, WPARAM wParam, LPARAM, BOOL &) {
+    if (m_stoppingFlag && *m_stoppingFlag) return 0;
+    if (m_cb) (void) m_cb->UpdateNotify();
+    return 0;
+  }
 
   LRESULT OnTimer(UINT, WPARAM, LPARAM, BOOL &) {
-    Stop(); // one-shot; re-arm from RefreshData
     if (m_stoppingFlag && *m_stoppingFlag) return 0;
     if (m_cb) (void) m_cb->UpdateNotify();
     return 0;
@@ -55,62 +64,157 @@ public:
     if (!result) return E_POINTER;
     m_stopping = false;
     m_cb = cb;
-    if (m_timer.CreateNow()) {
-      m_timer.SetCallback(cb, &m_stopping);
-      m_timer.Start(1000);
+
+    // Create notification window for both websocket and timer callbacks
+    if (m_notifyWindow.CreateNow()) {
+      m_notifyWindow.SetCallback(cb, &m_stopping);
+      m_wsManager.SetNotifyWindow(m_notifyWindow.m_hWnd);
+      m_wsManager.SetCallback(cb);
     }
-    if (m_cb) m_cb->UpdateNotify(); // prompt first RefreshData
+
     *result = 1;
     return S_OK;
   }
 
-  STDMETHOD(ConnectData)(long topicId, SAFEARRAY ** /*strings*/,
+  STDMETHOD(ConnectData)(long topicId, SAFEARRAY **strings,
                          VARIANT_BOOL *getNewValues, VARIANT *value) override {
-    m_topicId = topicId;
-    if (getNewValues) *getNewValues = VARIANT_FALSE; // allow immediate use of this value
-    VariantInit(value);
-    value->vt = VT_R8;
-    value->dblVal = NextRand() * 100;
+    if (!strings || !getNewValues || !value) return E_POINTER;
+
+    // Parse parameters from Excel
+    // WebSocket: =RTD("ProgID",, "ws://url", "topic")
+    // Legacy: =RTD("ProgID",, "RAND1S")
+    SAFEARRAY* sa = *strings;
+    std::wstring firstParam, secondParam;
+    LONG lBound = 0, uBound = 0;
+
+    // Get bounds
+    SafeArrayGetLBound(sa, 1, &lBound);
+    SafeArrayGetUBound(sa, 1, &uBound);
+
+    // First parameter
+    if (lBound <= uBound) {
+      VARIANT v;
+      VariantInit(&v);
+      LONG idx = lBound;
+      SafeArrayGetElement(sa, &idx, &v);
+      if (v.vt == VT_BSTR) {
+        firstParam = v.bstrVal;
+      }
+      VariantClear(&v);
+    }
+
+    // Second parameter (optional)
+    if (lBound + 1 <= uBound) {
+      VARIANT v;
+      VariantInit(&v);
+      LONG idx = lBound + 1;
+      SafeArrayGetElement(sa, &idx, &v);
+      if (v.vt == VT_BSTR) {
+        secondParam = v.bstrVal;
+      }
+      VariantClear(&v);
+    }
+
+    // Check if this is WebSocket mode (URL starts with ws:// or wss://)
+    bool isWebSocket = (firstParam.find(L"ws://") == 0 || firstParam.find(L"wss://") == 0);
+
+    if (isWebSocket) {
+      // WebSocket mode
+      m_topicIds.insert(topicId);
+      m_wsManager.Subscribe(topicId, firstParam, secondParam);
+
+      if (getNewValues) *getNewValues = VARIANT_TRUE; // wait for data
+      VariantInit(value);
+      value->vt = VT_EMPTY;
+    } else {
+      // Legacy mode - random numbers with timer
+      m_legacyTopics.insert(topicId);
+      m_topicIds.insert(topicId);
+
+      // Start timer if this is the first legacy topic
+      if (m_legacyTopics.size() == 1) {
+        m_notifyWindow.StartTimer(1000); // 1 second
+      }
+
+      // Return initial random value
+      if (getNewValues) *getNewValues = VARIANT_FALSE; // use this value immediately
+      VariantInit(value);
+      value->vt = VT_R8;
+      value->dblVal = NextRand() * 100;
+    }
+
     return S_OK;
   }
 
   STDMETHOD(RefreshData)(long *topicCount, SAFEARRAY **data) override {
     if (!topicCount || !data) return E_POINTER;
 
-    CComSafeArrayBound b[2];
-    b[0].SetCount(2);
-    b[1].SetCount(1); // 2x1
+    // Collect updates from both websocket and legacy topics
+    std::map<long, VARIANT> updates;
+
+    // Get websocket updates
+    m_wsManager.GetAllNewData(updates);
+
+    // Get legacy topic updates (generate random numbers)
+    for (long topicId : m_legacyTopics) {
+      VARIANT v;
+      VariantInit(&v);
+      v.vt = VT_R8;
+      v.dblVal = NextRand() * 100;
+      updates[topicId] = v;
+    }
+
+    if (updates.empty()) {
+      *topicCount = 0;
+      *data = nullptr;
+      return S_OK;
+    }
+
+    // Build 2D array: rows = 2 (topic ID, value), cols = number of updates
+    CComSafeArrayBound bounds[2];
+    bounds[0].SetCount(2);  // rows
+    bounds[1].SetCount((ULONG)updates.size());  // columns
     CComSafeArray<VARIANT> sa;
-    if (FAILED(sa.Create(b, 2))) return E_FAIL;
+    if (FAILED(sa.Create(bounds, 2))) return E_FAIL;
 
-    VARIANT vTopic;
-    VariantInit(&vTopic);
-    vTopic.vt = VT_I4;
-    vTopic.lVal = m_topicId;
-    VARIANT vVal;
-    VariantInit(&vVal);
-    vVal.vt = VT_R8;
-    vVal.dblVal = NextRand() * 100;
+    LONG col = 0;
+    for (auto& pair : updates) {
+      VARIANT vTopic;
+      VariantInit(&vTopic);
+      vTopic.vt = VT_I4;
+      vTopic.lVal = pair.first;
 
-    LONG idx[2];
-    idx[0] = 0;
-    idx[1] = 0;
-    sa.MultiDimSetAt(idx, vTopic);
-    idx[0] = 1;
-    idx[1] = 0;
-    sa.MultiDimSetAt(idx, vVal);
+      LONG idx[2];
+      idx[0] = 0;  // row 0 = topic ID
+      idx[1] = col;
+      sa.MultiDimSetAt(idx, vTopic);
 
-    *topicCount = 1;
+      idx[0] = 1;  // row 1 = value
+      sa.MultiDimSetAt(idx, pair.second);
+
+      VariantClear(&pair.second);
+      col++;
+    }
+
+    *topicCount = (long)updates.size();
     *data = sa.Detach();
 
-    // Re-arm after Excel has pulled this batch
-    m_timer.Start(1000);
     return S_OK;
   }
 
-  STDMETHOD(DisconnectData)(long) override {
-    m_timer.Stop();
-    if (m_timer.m_hWnd) m_timer.DestroyWindow();
+  STDMETHOD(DisconnectData)(long topicId) override {
+    // Remove from WebSocket manager
+    m_wsManager.Unsubscribe(topicId);
+
+    // Remove from legacy topics
+    m_legacyTopics.erase(topicId);
+
+    // Stop timer if no more legacy topics
+    if (m_legacyTopics.empty()) {
+      m_notifyWindow.StopTimer();
+    }
+
+    m_topicIds.erase(topicId);
     return S_OK;
   }
 
@@ -122,8 +226,9 @@ public:
 
   STDMETHOD(ServerTerminate)() override {
     m_stopping = true;
-    m_timer.Stop();
-    if (m_timer.m_hWnd) m_timer.DestroyWindow();
+    m_notifyWindow.StopTimer();
+    m_wsManager.Shutdown();
+    if (m_notifyWindow.m_hWnd) m_notifyWindow.DestroyWindow();
     m_cb.Release();
     return S_OK;
   }
@@ -131,20 +236,23 @@ public:
   // Called when the COM object is finally released
   void FinalRelease() {
     m_stopping = true;
-    m_timer.Stop();
-    if (m_timer.m_hWnd) m_timer.DestroyWindow();
+    m_notifyWindow.StopTimer();
+    m_wsManager.Shutdown();
+    if (m_notifyWindow.m_hWnd) m_notifyWindow.DestroyWindow();
     m_cb.Release();
   }
 
 private:
-  TimerWindow m_timer;
+  NotifyWindow m_notifyWindow;
+  WebSocketManager m_wsManager;
   CComPtr<IRTDUpdateEvent> m_cb;
-  long m_topicId = 0;
+  std::set<long> m_topicIds;
+  std::set<long> m_legacyTopics;  // Topics using legacy random number mode
   std::atomic<bool> m_stopping{false};
 
   static double NextRand() {
-    static std::mt19937_64 rng{(GetTickCount64())};
-    static std::uniform_real_distribution dist(0.0, 1.0);
+    static std::mt19937_64 rng{(unsigned int)GetTickCount64()};
+    static std::uniform_real_distribution<double> dist(0.0, 1.0);
     return dist(rng);
   }
 };

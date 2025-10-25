@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" ..)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe\" RtdTickCPP.sln /p:Configuration=Release /p:Platform=x64)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe\" RtdTickCPP.sln /p:Configuration=Release /p:Platform=x64 /v:minimal)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --build build --config Release)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --build build --config Release --clean-first)",
+      "Bash(regsvr32 /s /n /i:user \"C:\\Users\\inbox\\GitHub\\rtd\\build\\Release\\MyRtd.dll\")",
+      "Bash(reg query \"HKCU\\Software\\Classes\\MyCompany.RtdTickCPP\\CLSID\")",
+      "Bash(reg query \"HKCU\\Software\\Classes\\CLSID\\{C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111}\\InprocServer32\")",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --build build --config Release --target register)",
+      "WebSearch",
+      "Bash(npm install:*)",
+      "Bash(node test-ws-server.js:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
