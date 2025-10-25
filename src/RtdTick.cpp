@@ -36,8 +36,11 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
 
         GetLogger().LogServerStart();
 
-        // Register available data sources
-        RegisterDataSources();
+        // Register available data sources (idempotent)
+        if (!m_initialized.load(std::memory_order_acquire)) {
+            RegisterDataSources();
+            m_initialized.store(true, std::memory_order_release);
+        }
 
         *result = 1;
         return S_OK;
@@ -140,7 +143,12 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
     STDMETHOD(DisconnectData)(long topicId) override {
         auto it = m_topicSources.find(topicId);
         if (it != m_topicSources.end()) {
-            it->second->Unsubscribe(topicId);
+            // Guard against exceptions from data sources
+            try {
+                it->second->Unsubscribe(topicId);
+            } catch (const std::exception &e) {
+                GetLogger().LogError(e.what());
+            }
             m_topicSources.erase(it);
         }
         return S_OK;
@@ -168,7 +176,15 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
 
     void FinalRelease() {
         try {
+            // Signal stopping immediately
             m_stopping = true;
+
+            // Clear topic->source map first to avoid dangling pointers when data sources are destroyed
+            try {
+                m_topicSources.clear();
+            } catch (const std::exception &e) {
+                GetLogger().LogError(e.what());
+            }
 
             // Stop all data sources (threads will exit, but windows remain for now)
             for (auto &source : m_dataSources) {
@@ -186,14 +202,13 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
                 GetLogger().LogError(e.what());
             }
 
+            // Release callback explicitly to drop reference to Excel
             try {
-                m_topicSources.clear();
+                m_callback.Release();
             } catch (const std::exception &e) {
                 GetLogger().LogError(e.what());
             }
 
-            // Callback will be released automatically by CComPtr destructor
-            // No need to manually release it
         } catch (const std::exception &e) {
             GetLogger().LogError(e.what());
         }
@@ -202,6 +217,7 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
   private:
     CComPtr<IRTDUpdateEvent> m_callback;
     std::atomic<bool> m_stopping{false};
+    std::atomic<bool> m_initialized{false};
 
     // Registered data sources
     std::vector<std::unique_ptr<IDataSource>> m_dataSources;
@@ -213,11 +229,15 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
         // Create callback that notifies Excel when data is available
         auto notifyCallback = [this]() {
             try {
-                if (!m_stopping && m_callback) {
-                    m_callback->UpdateNotify();
+                // Snapshot the COM pointer to avoid races with FinalRelease
+                CComPtr<IRTDUpdateEvent> cb = m_callback;
+                if (!m_stopping && cb) {
+                    cb->UpdateNotify();
                 }
             } catch (const std::exception &e) {
                 GetLogger().LogError(e.what());
+            } catch (...) {
+                GetLogger().LogError(L"Unknown exception in notifyCallback");
             }
         };
 
