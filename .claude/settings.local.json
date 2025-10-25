@@ -16,7 +16,8 @@
       "Bash(curl:*)",
       "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" -S . -B build -G \"Visual Studio 17 2022\" -A x64)",
       "Bash(echo:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Read(//c/Users/inbox/RTDLogs/**)"
     ],
     "deny": [],
     "ask": []

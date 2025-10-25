@@ -40,16 +40,44 @@ struct ConnectionData {
     ConnectionData() : connected(false), shouldStop(false), hSession(nullptr), hConnect(nullptr), hWebSocket(nullptr) {}
 
     ~ConnectionData() {
-        shouldStop = true;
-        if (workerThread.joinable()) {
-            workerThread.join();
+        try {
+            shouldStop = true;
+
+            // Close SESSION handle FIRST - this forcefully aborts all pending operations
+            if (hSession) {
+                WinHttpCloseHandle(hSession);
+                hSession = NULL;
+            }
+
+            // If the worker thread is still joinable, join it. If we're running in the
+            // worker thread's own context (destructor called on the worker thread),
+            // joining would attempt to join the current thread and cause a crash.
+            // In that case detach the thread object instead to allow destruction.
+            if (workerThread.joinable()) {
+                if (workerThread.get_id() == std::this_thread::get_id()) {
+                    // Avoid joining self; detach the thread object
+                    workerThread.detach();
+                } else {
+                    try {
+                        workerThread.join();
+                    } catch (...) {
+                        // Swallow join exceptions
+                    }
+                }
+            }
+
+            // Clean up remaining handles (already invalid but good practice)
+            if (hWebSocket) {
+                WinHttpCloseHandle(hWebSocket);
+                hWebSocket = NULL;
+            }
+            if (hConnect) {
+                WinHttpCloseHandle(hConnect);
+                hConnect = NULL;
+            }
+        } catch (...) {
+            // Swallow exceptions in destructor
         }
-        if (hWebSocket)
-            WinHttpCloseHandle(hWebSocket);
-        if (hConnect)
-            WinHttpCloseHandle(hConnect);
-        if (hSession)
-            WinHttpCloseHandle(hSession);
     }
 };
 
@@ -241,7 +269,7 @@ class WebSocketManager {
                     }
 
                     // Notify if any topic was updated
-                    if (anyUpdate && notifyWindow) {
+                    if (anyUpdate && notifyWindow && IsWindow(notifyWindow)) {
                         PostMessage(notifyWindow, WM_WEBSOCKET_DATA, 0, 0);
                     }
                 } catch (const std::exception &e) {
@@ -310,25 +338,46 @@ class WebSocketManager {
     }
 
     void Unsubscribe(long topicId) {
-        std::lock_guard lock(m_mutex);
+        std::shared_ptr<ConnectionData> connToJoin = nullptr;
 
-        auto urlIt = m_topicToUrl.find(topicId);
-        if (urlIt == m_topicToUrl.end())
-            return;
+        {
+            std::lock_guard lock(m_mutex);
 
-        std::wstring url = urlIt->second;
-        m_topicToUrl.erase(urlIt);
+            auto urlIt = m_topicToUrl.find(topicId);
+            if (urlIt == m_topicToUrl.end())
+                return;
 
-        if (auto connIt = m_connections.find(url); connIt != m_connections.end()) {
-            {
-                std::lock_guard topicLock(connIt->second->topicsMutex);
-                connIt->second->topics.erase(topicId);
+            std::wstring url = urlIt->second;
+            m_topicToUrl.erase(urlIt);
 
-                // If no more topics, close connection
-                if (connIt->second->topics.empty()) {
-                    connIt->second->shouldStop = true;
-                    m_connections.erase(connIt);
+            if (auto connIt = m_connections.find(url); connIt != m_connections.end()) {
+                {
+                    std::lock_guard topicLock(connIt->second->topicsMutex);
+                    connIt->second->topics.erase(topicId);
+
+                    // If no more topics, signal connection to stop and remove from map.
+                    if (connIt->second->topics.empty()) {
+                        connIt->second->shouldStop = true;
+                        // Take a copy so we can join the thread outside the mutex
+                        connToJoin = connIt->second;
+                        m_connections.erase(connIt);
+                    }
                 }
+            }
+        }
+
+        // Join the worker thread outside of the mutex to avoid deadlocks.
+        if (connToJoin) {
+            try {
+                if (connToJoin->workerThread.joinable()) {
+                    if (connToJoin->workerThread.get_id() == std::this_thread::get_id()) {
+                        connToJoin->workerThread.detach();
+                    } else {
+                        connToJoin->workerThread.join();
+                    }
+                }
+            } catch (...) {
+                // Swallow exceptions during join
             }
         }
     }
@@ -351,11 +400,30 @@ class WebSocketManager {
     }
 
     void Shutdown() {
-        std::lock_guard lock(m_mutex);
-        for (auto &val : m_connections | std::views::values) {
-            val->shouldStop = true;
+        std::vector<std::shared_ptr<ConnectionData>> conns;
+        {
+            std::lock_guard lock(m_mutex);
+            for (auto &val : m_connections | std::views::values) {
+                val->shouldStop = true;
+                conns.push_back(val);
+            }
+            m_connections.clear();
+            m_topicToUrl.clear();
         }
-        m_connections.clear();
-        m_topicToUrl.clear();
+
+        // Join worker threads outside the mutex
+        for (auto &conn : conns) {
+            try {
+                if (conn->workerThread.joinable()) {
+                    if (conn->workerThread.get_id() == std::this_thread::get_id()) {
+                        conn->workerThread.detach();
+                    } else {
+                        conn->workerThread.join();
+                    }
+                }
+            } catch (...) {
+                // Ignore join errors during shutdown
+            }
+        }
     }
 };

@@ -155,30 +155,49 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
     }
 
     STDMETHOD(ServerTerminate)() override {
-        GetLogger().LogServerTerminate();
+        try {
+            GetLogger().LogServerTerminate();
 
-        m_stopping = true;
-
-        // Shutdown all data sources
-        for (auto &source : m_dataSources) {
-            source->Shutdown();
+            // Just signal shutdown - let FinalRelease do the actual cleanup
+            m_stopping = true;
+        } catch (...) {
+            // Swallow all exceptions - don't let them propagate to Excel
         }
-
-        m_dataSources.clear();
-        m_topicSources.clear();
-        m_callback.Release();
 
         return S_OK;
     }
 
     void FinalRelease() {
-        m_stopping = true;
-        for (auto &source : m_dataSources) {
-            source->Shutdown();
+        try {
+            m_stopping = true;
+
+            // Stop all data sources (threads will exit, but windows remain for now)
+            for (auto &source : m_dataSources) {
+                try {
+                    source->Shutdown();
+                } catch (...) {
+                    // Continue shutting down other sources even if one fails
+                }
+            }
+
+            // Clear data structures (unique_ptr destructors will destroy windows)
+            try {
+                m_dataSources.clear();
+            } catch (...) {
+                // Ignore cleanup errors
+            }
+
+            try {
+                m_topicSources.clear();
+            } catch (...) {
+                // Ignore cleanup errors
+            }
+
+            // Callback will be released automatically by CComPtr destructor
+            // No need to manually release it
+        } catch (...) {
+            // Swallow all exceptions - don't let them crash Excel
         }
-        m_dataSources.clear();
-        m_topicSources.clear();
-        m_callback.Release();
     }
 
   private:
@@ -194,8 +213,12 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
     void RegisterDataSources() {
         // Create callback that notifies Excel when data is available
         auto notifyCallback = [this]() {
-            if (!m_stopping && m_callback) {
-                m_callback->UpdateNotify();
+            try {
+                if (!m_stopping && m_callback) {
+                    m_callback->UpdateNotify();
+                }
+            } catch (...) {
+                // Swallow exceptions - don't crash if Excel is shutting down
             }
         };
 

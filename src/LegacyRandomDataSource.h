@@ -53,7 +53,19 @@ private:
 public:
   LegacyRandomDataSource() : m_rng(static_cast<unsigned int>(GetTickCount64())), m_dist(0.0, 1.0) {}
 
-  ~LegacyRandomDataSource() override = default;
+  ~LegacyRandomDataSource() override {
+    try {
+      // Stop timer
+      m_timerWindow.StopTimer();
+
+      // Destroy the timer window
+      if (m_timerWindow.m_hWnd) {
+        m_timerWindow.DestroyWindow();
+      }
+    } catch (...) {
+      // Swallow exceptions in destructor
+    }
+  }
 
   void Initialize(DataAvailableCallback callback) override {
     m_callback = callback;
@@ -111,10 +123,9 @@ public:
   }
 
   void Shutdown() override {
+    // Stop the timer, but DON'T destroy the window
+    // Let it be cleaned up by the destructor
     m_timerWindow.StopTimer();
-    if (m_timerWindow.m_hWnd) {
-      m_timerWindow.DestroyWindow();
-    }
     m_topics.clear();
   }
 

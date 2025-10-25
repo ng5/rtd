@@ -35,7 +35,20 @@ class WebSocketDataSource : public IDataSource {
 
   public:
     WebSocketDataSource() = default;
-    ~WebSocketDataSource() override = default;
+
+    ~WebSocketDataSource() override {
+        try {
+            // Ensure manager is shutdown
+            m_wsManager.Shutdown();
+
+            // Destroy the notification window
+            if (m_notifyWindow.m_hWnd) {
+                m_notifyWindow.DestroyWindow();
+            }
+        } catch (...) {
+            // Swallow exceptions in destructor
+        }
+    }
 
     void Initialize(DataAvailableCallback callback) override {
         m_callback = callback;
@@ -89,10 +102,9 @@ class WebSocketDataSource : public IDataSource {
     }
 
     void Shutdown() override {
+        // Just shutdown WebSocket manager (stops threads)
+        // DON'T destroy the window - let it be cleaned up by the destructor
         m_wsManager.Shutdown();
-        if (m_notifyWindow.m_hWnd) {
-            m_notifyWindow.DestroyWindow();
-        }
     }
 
     std::wstring GetSourceName() const override { return L"WebSocket"; }
