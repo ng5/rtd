@@ -1,0 +1,4 @@
+# .clang-format for LLVM coding standards
+BasedOnStyle: LLVM
+ColumnLimit: 120
+IndentWidth: 4

@@ -1,7 +1,7 @@
 #pragma once
 #include "IDataSource.h"
-#include "WebSocketManager.h"
 #include "Logger.h"
+#include "WebSocketManager.h"
 #include <atlbase.h>
 #include <atlwin.h>
 
@@ -9,20 +9,16 @@
 class WebSocketNotifyWindow : public CWindowImpl<WebSocketNotifyWindow, CWindow, CWinTraits<>> {
     DataAvailableCallback m_callback;
 
-public:
+  public:
     BEGIN_MSG_MAP(WebSocketNotifyWindow)
-        MESSAGE_HANDLER(WM_WEBSOCKET_DATA, OnWebSocketData)
+    MESSAGE_HANDLER(WM_WEBSOCKET_DATA, OnWebSocketData)
     END_MSG_MAP()
 
-    void SetCallback(DataAvailableCallback callback) {
-        m_callback = callback;
-    }
+    void SetCallback(const DataAvailableCallback &callback) { m_callback = callback; }
 
-    BOOL CreateNow() {
-        return Create(nullptr) != nullptr;
-    }
+    BOOL CreateNow() { return Create(nullptr) != nullptr; }
 
-    LRESULT OnWebSocketData(UINT, WPARAM, LPARAM, BOOL&) {
+    LRESULT OnWebSocketData(UINT, WPARAM, LPARAM, BOOL &) const {
         if (m_callback) {
             m_callback();
         }
@@ -32,12 +28,12 @@ public:
 
 // WebSocket data source implementation
 class WebSocketDataSource : public IDataSource {
-private:
+  private:
     WebSocketManager m_wsManager;
     WebSocketNotifyWindow m_notifyWindow;
     DataAvailableCallback m_callback;
 
-public:
+  public:
     WebSocketDataSource() = default;
     ~WebSocketDataSource() override = default;
 
@@ -50,7 +46,7 @@ public:
         }
     }
 
-    bool Subscribe(long topicId, const TopicParams& params, double& initialValue) override {
+    bool Subscribe(long topicId, const TopicParams &params, double &initialValue) override {
         GetLogger().LogSubscription(topicId, params.param1, params.param2);
 
         m_wsManager.Subscribe(topicId, params.param1, params.param2);
@@ -72,22 +68,22 @@ public:
         std::map<long, VARIANT> wsUpdates;
         m_wsManager.GetAllNewData(wsUpdates);
 
-        for (auto& pair : wsUpdates) {
-            if (pair.second.vt == VT_R8) {
+        for (auto &[fst, snd] : wsUpdates) {
+            if (snd.vt == VT_R8) {
                 TopicUpdate update;
-                update.topicId = pair.first;
-                update.value = pair.second.dblVal;
+                update.topicId = fst;
+                update.value = snd.dblVal;
                 updates.push_back(update);
 
-                GetLogger().LogDataReceived(pair.first, pair.second.dblVal, L"WebSocket");
+                GetLogger().LogDataReceived(fst, snd.dblVal, L"WebSocket");
             }
-            VariantClear(&pair.second);
+            VariantClear(&snd);
         }
 
         return updates;
     }
 
-    bool CanHandle(const TopicParams& params) const override {
+    bool CanHandle(const TopicParams &params) const override {
         // Check if param1 starts with ws:// or wss://
         return params.param1.find(L"ws://") == 0 || params.param1.find(L"wss://") == 0;
     }
@@ -99,7 +95,5 @@ public:
         }
     }
 
-    std::wstring GetSourceName() const override {
-        return L"WebSocket";
-    }
+    std::wstring GetSourceName() const override { return L"WebSocket"; }
 };
