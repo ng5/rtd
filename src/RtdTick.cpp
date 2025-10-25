@@ -7,44 +7,14 @@
 #include <atlsafe.h>
 #include <atomic>
 #include <map>
-#include <set>
-#include <random>
+#include <memory>
+#include <vector>
 #include "resource.h"
 #include "RtdTickLib_i.h"
-#include "WebSocketManager.h"
+#include "IDataSource.h"
+#include "WebSocketDataSource.h"
+#include "LegacyRandomDataSource.h"
 #include "Logger.h"
-
-class NotifyWindow : public CWindowImpl<NotifyWindow, CWindow, CWinTraits<> > {
-  CComPtr<IRTDUpdateEvent> m_cb;
-  std::atomic<bool> *m_stoppingFlag = nullptr;
-
-public:
-  BEGIN_MSG_MAP(NotifyWindow)
-      MESSAGE_HANDLER(WM_WEBSOCKET_DATA, OnWebSocketData)
-      MESSAGE_HANDLER(WM_TIMER, OnTimer)
-  END_MSG_MAP()
-
-  void SetCallback(IRTDUpdateEvent *cb, std::atomic<bool> *stoppingFlag = nullptr) {
-    m_cb = cb;
-    m_stoppingFlag = stoppingFlag;
-  }
-
-  BOOL CreateNow() { return Create(nullptr) != nullptr; }
-  void StartTimer(UINT ms) { if (m_hWnd) SetTimer(1, ms); }
-  void StopTimer() { if (m_hWnd) KillTimer(1); }
-
-  LRESULT OnWebSocketData(UINT, WPARAM wParam, LPARAM, BOOL &) {
-    if (m_stoppingFlag && *m_stoppingFlag) return 0;
-    if (m_cb) (void) m_cb->UpdateNotify();
-    return 0;
-  }
-
-  LRESULT OnTimer(UINT, WPARAM, LPARAM, BOOL &) {
-    if (m_stoppingFlag && *m_stoppingFlag) return 0;
-    if (m_cb) (void) m_cb->UpdateNotify();
-    return 0;
-  }
-};
 
 // {C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111}
 class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111")
@@ -64,17 +34,12 @@ public:
   STDMETHOD(ServerStart)(IRTDUpdateEvent *cb, long *result) override {
     if (!result) return E_POINTER;
     m_stopping = false;
-    m_cb = cb;
+    m_callback = cb;
 
-    // Log server start
     GetLogger().LogServerStart();
 
-    // Create notification window for both websocket and timer callbacks
-    if (m_notifyWindow.CreateNow()) {
-      m_notifyWindow.SetCallback(cb, &m_stopping);
-      m_wsManager.SetNotifyWindow(m_notifyWindow.m_hWnd);
-      m_wsManager.SetCallback(cb);
-    }
+    // Register available data sources
+    RegisterDataSources();
 
     *result = 1;
     return S_OK;
@@ -85,73 +50,34 @@ public:
     if (!strings || !getNewValues || !value) return E_POINTER;
 
     // Parse parameters from Excel
-    // WebSocket: =RTD("ProgID",, "ws://url", "topic")
-    // Legacy: =RTD("ProgID",, "RAND1S")
-    SAFEARRAY* sa = *strings;
-    std::wstring firstParam, secondParam;
-    LONG lBound = 0, uBound = 0;
+    TopicParams params = ParseTopicParams(*strings);
 
-    // Get bounds
-    SafeArrayGetLBound(sa, 1, &lBound);
-    SafeArrayGetUBound(sa, 1, &uBound);
-
-    // First parameter
-    if (lBound <= uBound) {
-      VARIANT v;
-      VariantInit(&v);
-      LONG idx = lBound;
-      SafeArrayGetElement(sa, &idx, &v);
-      if (v.vt == VT_BSTR) {
-        firstParam = v.bstrVal;
-      }
-      VariantClear(&v);
+    // Find appropriate data source
+    IDataSource* source = FindDataSource(params);
+    if (!source) {
+      return E_INVALIDARG;
     }
 
-    // Second parameter (optional)
-    if (lBound + 1 <= uBound) {
-      VARIANT v;
-      VariantInit(&v);
-      LONG idx = lBound + 1;
-      SafeArrayGetElement(sa, &idx, &v);
-      if (v.vt == VT_BSTR) {
-        secondParam = v.bstrVal;
-      }
-      VariantClear(&v);
+    // Subscribe via the data source
+    double initialValue = 0.0;
+    if (!source->Subscribe(topicId, params, initialValue)) {
+      return E_FAIL;
     }
 
-    // Check if this is WebSocket mode (URL starts with ws:// or wss://)
-    bool isWebSocket = (firstParam.find(L"ws://") == 0 || firstParam.find(L"wss://") == 0);
+    // Track which source handles this topic
+    m_topicSources[topicId] = source;
 
-    if (isWebSocket) {
-      // WebSocket mode
-      m_topicIds.insert(topicId);
-
-      // Log subscription
-      GetLogger().LogSubscription(topicId, firstParam, secondParam);
-
-      m_wsManager.Subscribe(topicId, firstParam, secondParam);
-
-      if (getNewValues) *getNewValues = VARIANT_TRUE; // wait for data
-      VariantInit(value);
-      value->vt = VT_EMPTY;
-    } else {
-      // Legacy mode - random numbers with timer
-      m_legacyTopics.insert(topicId);
-      m_topicIds.insert(topicId);
-
-      // Log subscription
-      GetLogger().LogSubscription(topicId, firstParam, L"");
-
-      // Start timer if this is the first legacy topic
-      if (m_legacyTopics.size() == 1) {
-        m_notifyWindow.StartTimer(1000); // 1 second
-      }
-
-      // Return initial random value
-      if (getNewValues) *getNewValues = VARIANT_FALSE; // use this value immediately
-      VariantInit(value);
+    // Return initial value
+    VariantInit(value);
+    if (initialValue != 0.0) {
+      // Legacy mode - return immediate value
+      *getNewValues = VARIANT_FALSE;
       value->vt = VT_R8;
-      value->dblVal = NextRand() * 100;
+      value->dblVal = initialValue;
+    } else {
+      // WebSocket mode - wait for data
+      *getNewValues = VARIANT_TRUE;
+      value->vt = VT_EMPTY;
     }
 
     return S_OK;
@@ -160,81 +86,63 @@ public:
   STDMETHOD(RefreshData)(long *topicCount, SAFEARRAY **data) override {
     if (!topicCount || !data) return E_POINTER;
 
-    // Collect updates from both websocket and legacy topics
-    std::map<long, VARIANT> updates;
-
-    // Get websocket updates
-    m_wsManager.GetAllNewData(updates);
-
-    // Get legacy topic updates (generate random numbers)
-    for (long topicId : m_legacyTopics) {
-      VARIANT v;
-      VariantInit(&v);
-      v.vt = VT_R8;
-      v.dblVal = NextRand() * 100;
-      updates[topicId] = v;
+    // Collect updates from all data sources
+    std::vector<TopicUpdate> allUpdates;
+    for (auto& source : m_dataSources) {
+      std::vector<TopicUpdate> updates = source->GetNewData();
+      allUpdates.insert(allUpdates.end(), updates.begin(), updates.end());
     }
 
-    if (updates.empty()) {
+    if (allUpdates.empty()) {
       *topicCount = 0;
       *data = nullptr;
       return S_OK;
     }
 
-    // Build 2D array: rows = 2 (topic ID, value), cols = number of updates
+    // Build 2D SAFEARRAY for Excel
     CComSafeArrayBound bounds[2];
-    bounds[0].SetCount(2);  // rows
-    bounds[1].SetCount((ULONG)updates.size());  // columns
+    bounds[0].SetCount(2);  // rows (topic ID, value)
+    bounds[1].SetCount((ULONG)allUpdates.size());  // columns
     CComSafeArray<VARIANT> sa;
     if (FAILED(sa.Create(bounds, 2))) return E_FAIL;
 
     LONG col = 0;
-    for (auto& pair : updates) {
+    for (const auto& update : allUpdates) {
+      // Row 0: Topic ID
       VARIANT vTopic;
       VariantInit(&vTopic);
       vTopic.vt = VT_I4;
-      vTopic.lVal = pair.first;
+      vTopic.lVal = update.topicId;
 
       LONG idx[2];
-      idx[0] = 0;  // row 0 = topic ID
+      idx[0] = 0;
       idx[1] = col;
       sa.MultiDimSetAt(idx, vTopic);
 
-      idx[0] = 1;  // row 1 = value
-      sa.MultiDimSetAt(idx, pair.second);
+      // Row 1: Value
+      VARIANT vValue;
+      VariantInit(&vValue);
+      vValue.vt = VT_R8;
+      vValue.dblVal = update.value;
 
-      // Log data being sent to Excel
-      if (pair.second.vt == VT_R8) {
-        std::wstring source = m_legacyTopics.count(pair.first) > 0 ? L"Legacy" : L"WebSocket";
-        GetLogger().LogDataReceived(pair.first, pair.second.dblVal, source);
-      }
+      idx[0] = 1;
+      sa.MultiDimSetAt(idx, vValue);
 
-      VariantClear(&pair.second);
       col++;
     }
 
-    *topicCount = (long)updates.size();
+    *topicCount = (long)allUpdates.size();
     *data = sa.Detach();
 
     return S_OK;
   }
 
   STDMETHOD(DisconnectData)(long topicId) override {
-    // Log unsubscribe
-    GetLogger().LogUnsubscribe(topicId);
-
-    // Remove from WebSocket manager
-    m_wsManager.Unsubscribe(topicId);
-
-    // Remove from legacy topics
-    m_legacyTopics.erase(topicId);
-
-    // Stop timer if no more legacy topics
-    if (m_legacyTopics.empty()) {
-      m_notifyWindow.StopTimer();
+    auto it = m_topicSources.find(topicId);
+    if (it != m_topicSources.end()) {
+      it->second->Unsubscribe(topicId);
+      m_topicSources.erase(it);
     }
-
-    m_topicIds.erase(topicId);
     return S_OK;
   }
 
@@ -245,38 +153,102 @@ public:
   }
 
   STDMETHOD(ServerTerminate)() override {
-    // Log server terminate
     GetLogger().LogServerTerminate();
 
     m_stopping = true;
-    m_notifyWindow.StopTimer();
-    m_wsManager.Shutdown();
-    if (m_notifyWindow.m_hWnd) m_notifyWindow.DestroyWindow();
-    m_cb.Release();
+
+    // Shutdown all data sources
+    for (auto& source : m_dataSources) {
+      source->Shutdown();
+    }
+
+    m_dataSources.clear();
+    m_topicSources.clear();
+    m_callback.Release();
+
     return S_OK;
   }
 
-  // Called when the COM object is finally released
   void FinalRelease() {
     m_stopping = true;
-    m_notifyWindow.StopTimer();
-    m_wsManager.Shutdown();
-    if (m_notifyWindow.m_hWnd) m_notifyWindow.DestroyWindow();
-    m_cb.Release();
+    for (auto& source : m_dataSources) {
+      source->Shutdown();
+    }
+    m_dataSources.clear();
+    m_topicSources.clear();
+    m_callback.Release();
   }
 
 private:
-  NotifyWindow m_notifyWindow;
-  WebSocketManager m_wsManager;
-  CComPtr<IRTDUpdateEvent> m_cb;
-  std::set<long> m_topicIds;
-  std::set<long> m_legacyTopics;  // Topics using legacy random number mode
+  CComPtr<IRTDUpdateEvent> m_callback;
   std::atomic<bool> m_stopping{false};
 
-  static double NextRand() {
-    static std::mt19937_64 rng{(unsigned int)GetTickCount64()};
-    static std::uniform_real_distribution<double> dist(0.0, 1.0);
-    return dist(rng);
+  // Registered data sources
+  std::vector<std::unique_ptr<IDataSource>> m_dataSources;
+
+  // Map from topicId to the data source handling it
+  std::map<long, IDataSource*> m_topicSources;
+
+  void RegisterDataSources() {
+    // Create callback that notifies Excel when data is available
+    auto notifyCallback = [this]() {
+      if (!m_stopping && m_callback) {
+        m_callback->UpdateNotify();
+      }
+    };
+
+    // Register WebSocket data source
+    auto wsSource = std::make_unique<WebSocketDataSource>();
+    wsSource->Initialize(notifyCallback);
+    m_dataSources.push_back(std::move(wsSource));
+
+    // Register Legacy random data source
+    auto legacySource = std::make_unique<LegacyRandomDataSource>();
+    legacySource->Initialize(notifyCallback);
+    m_dataSources.push_back(std::move(legacySource));
+  }
+
+  TopicParams ParseTopicParams(SAFEARRAY* sa) {
+    TopicParams params;
+
+    LONG lBound = 0, uBound = 0;
+    SafeArrayGetLBound(sa, 1, &lBound);
+    SafeArrayGetUBound(sa, 1, &uBound);
+
+    // First parameter
+    if (lBound <= uBound) {
+      VARIANT v;
+      VariantInit(&v);
+      LONG idx = lBound;
+      SafeArrayGetElement(sa, &idx, &v);
+      if (v.vt == VT_BSTR) {
+        params.param1 = v.bstrVal;
+      }
+      VariantClear(&v);
+    }
+
+    // Second parameter
+    if (lBound + 1 <= uBound) {
+      VARIANT v;
+      VariantInit(&v);
+      LONG idx = lBound + 1;
+      SafeArrayGetElement(sa, &idx, &v);
+      if (v.vt == VT_BSTR) {
+        params.param2 = v.bstrVal;
+      }
+      VariantClear(&v);
+    }
+
+    return params;
+  }
+
+  IDataSource* FindDataSource(const TopicParams& params) {
+    for (auto& source : m_dataSources) {
+      if (source->CanHandle(params)) {
+        return source.get();
+      }
+    }
+    return nullptr;
   }
 };
 

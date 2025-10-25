@@ -73,13 +73,54 @@ The build system uses MIDL (Microsoft Interface Definition Language) compiler to
 2. Generate IID definitions (`RtdTickLib_i.c`)
 3. Create a Type Library binary (`TypeLibrary.tlb`) that gets embedded in the DLL resource
 
+### Architecture Overview
+
+The codebase follows a **clean separation of concerns** using the **Strategy pattern**:
+
+```
+RtdTick (COM Interface Layer)
+    ├── Handles all Excel COM interface details (VARIANT, SAFEARRAY, IRtdServer)
+    ├── Routes subscriptions to appropriate data sources
+    └── Translates between COM and C++ types
+
+IDataSource (Abstract Interface)
+    ├── WebSocketDataSource (WebSocket implementation)
+    │   └── WebSocketManager (low-level WebSocket client)
+    └── LegacyRandomDataSource (Random number generator)
+```
+
+**Key Design Principles:**
+- **Data sources are COM-agnostic**: They only deal with C++ types (long, double, std::wstring)
+- **RtdTick is the only class touching Excel COM**: All VARIANT, SAFEARRAY, IRTDUpdateEvent code is isolated here
+- **Easy extensibility**: Adding a new data source requires only implementing `IDataSource` interface and registering it
+- **Clear responsibilities**: Each class has a single, well-defined purpose
+
 ### Key Components
 
-**src/RtdTick.cpp**: The main RTD server implementation
-- `RtdTick` class: Implements `IRtdServer` interface using ATL's `CComObjectRootEx` and `IDispatchImpl`
-- `NotifyWindow` class: ATL window that receives WM_WEBSOCKET_DATA messages from worker threads
-- Multi-topic support using `std::set<long>` to track active topic IDs
-- Integrates with `WebSocketManager` for WebSocket connections
+**src/RtdTick.cpp**: COM interface layer
+- `RtdTick` class: Implements `IRtdServer` COM interface
+- Registers and manages multiple `IDataSource` implementations
+- Routes Excel subscriptions to appropriate data source based on parameters
+- Translates between Excel COM types (VARIANT, SAFEARRAY) and C++ types
+- ~255 lines, focused only on COM interface handling
+
+**src/IDataSource.h**: Abstract data source interface
+- Defines contract for all data sources
+- COM-agnostic interface using only C++ standard types
+- Methods: `Initialize`, `Subscribe`, `Unsubscribe`, `GetNewData`, `CanHandle`, `Shutdown`
+- Allows easy addition of new data sources without modifying RtdTick
+
+**src/WebSocketDataSource.h**: WebSocket implementation
+- Implements `IDataSource` for WebSocket connections
+- Wraps `WebSocketManager` for low-level WebSocket operations
+- Handles notification window for async updates
+- Completely isolated from Excel COM interface
+
+**src/LegacyRandomDataSource.h**: Random number generator
+- Implements `IDataSource` for legacy random number mode
+- Uses timer-based updates (1 second interval)
+- Self-contained with own timer window
+- No Excel/COM dependencies
 
 **src/WebSocketManager.h**: WebSocket client implementation
 - `WebSocketManager` class: Manages WebSocket connections with connection pooling by URL
