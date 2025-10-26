@@ -1,8 +1,7 @@
 #include "IDataSource.h"
-#include "LegacyRandomDataSource.h"
 #include "Logger.h"
 #include "RtdTickLib_i.h"
-#include "WebSocketDataSource.h"
+#include "ScalarRandomSource.h"
 #include "resource.h"
 #include <WinNls.h>
 #include <array>
@@ -254,13 +253,8 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
             }
         };
 
-        // Register WebSocket data source
-        auto wsSource = std::make_unique<WebSocketDataSource>();
-        wsSource->Initialize(notifyCallback);
-        m_dataSources.push_back(std::move(wsSource));
-
         // Register Legacy random data source
-        auto legacySource = std::make_unique<LegacyRandomDataSource>();
+        auto legacySource = std::make_unique<ScalarRandomSource>();
         legacySource->Initialize(notifyCallback);
         m_dataSources.push_back(std::move(legacySource));
     }
