@@ -14,6 +14,18 @@
 #include <vector>
 #include <windows.h>
 
+// Helper to convert BSTR/wide to UTF-8 std::string (ASCII expected)
+static std::string WideToUtf8String(const BSTR bstr) {
+    if (!bstr)
+        return {};
+    int size = WideCharToMultiByte(CP_UTF8, 0, bstr, -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 0)
+        return {};
+    std::string out(size - 1, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, bstr, -1, out.data(), size, nullptr, nullptr);
+    return out;
+}
+
 // {C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111}
 class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
     : public CComObjectRootEx<CComSingleThreadModel>, // STA
@@ -237,7 +249,7 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
             } catch (const std::exception &e) {
                 GetLogger().LogError(e.what());
             } catch (...) {
-                GetLogger().LogError(L"Unknown exception in notifyCallback");
+                GetLogger().LogError("Unknown exception in notifyCallback");
             }
         };
 
@@ -266,7 +278,7 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
             LONG idx = lBound;
             SafeArrayGetElement(sa, &idx, &v);
             if (v.vt == VT_BSTR) {
-                params.param1 = v.bstrVal;
+                params.param1 = WideToUtf8String(v.bstrVal);
             }
             VariantClear(&v);
         }
@@ -278,7 +290,7 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
             LONG idx = lBound + 1;
             SafeArrayGetElement(sa, &idx, &v);
             if (v.vt == VT_BSTR) {
-                params.param2 = v.bstrVal;
+                params.param2 = WideToUtf8String(v.bstrVal);
             }
             VariantClear(&v);
         }

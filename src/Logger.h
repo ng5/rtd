@@ -1,73 +1,67 @@
 #pragma once
 #include <chrono>
 #include <ctime>
-#include <format>
 #include <fstream>
+#include <iomanip>
 #include <mutex>
 #include <shlobj.h>
+#include <sstream>
 #include <string>
 #include <windows.h>
 
 class Logger {
-  private:
-    std::wstring m_logFilePath;
+    std::string m_logFilePath;
     std::ofstream m_logFile;
     std::mutex m_mutex;
     bool m_enabled;
-    static std::wstring ConvertToWString(const char *str) {
-        if (!str) {
-            return std::wstring();
+
+    static std::string GetUserHomeDirectory() {
+        char path[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, path))) {
+            return {path};
         }
-        int len = MultiByteToWideChar(CP_ACP, 0, str, -1, nullptr, 0); // Get the required length
-        if (len == 0) {
-            throw std::runtime_error("Conversion error");
-        }
-        std::wstring wstr(len, L'\0');
-        MultiByteToWideChar(CP_ACP, 0, str, -1, &wstr[0], len);
-        wstr.resize(len - 1); // Remove the null terminator
-        return wstr;
-    }
-    static std::wstring GetUserHomeDirectory() {
-        wchar_t path[MAX_PATH];
-        if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_PROFILE, NULL, 0, path))) {
-            return path;
-        }
-        return L"";
+        return {};
     }
 
-    static std::wstring GetTimestamp() {
+    static std::string GetTimestamp() {
+        using namespace std::chrono;
+        auto now = system_clock::now();
+        auto tt = system_clock::to_time_t(now);
+        auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+
+        std::tm tm{};
+        localtime_s(&tm, &tt);
+
+        std::ostringstream ss;
+        ss << std::setfill('0') << std::setw(4) << (tm.tm_year + 1900) << "-" << std::setw(2) << (tm.tm_mon + 1) << "-"
+           << std::setw(2) << tm.tm_mday << " " << std::setw(2) << tm.tm_hour << ":" << std::setw(2) << tm.tm_min << ":"
+           << std::setw(2) << tm.tm_sec << "." << std::setw(3) << ms.count();
+        return ss.str();
+    }
+
+    static std::string GetFileTimestamp() {
         auto now = std::chrono::system_clock::now();
-        auto time_t = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
-
-        std::tm tm;
-        localtime_s(&tm, &time_t);
-
-        return std::format(L"{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03d}", tm.tm_year + 1900, tm.tm_mon + 1,
-                           tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, ms.count());
-    }
-
-    static std::wstring GetFileTimestamp() {
-        auto now = std::chrono::system_clock::now();
-        auto time_t = std::chrono::system_clock::to_time_t(now);
-
-        std::tm tm;
-        localtime_s(&tm, &time_t);
-
-        return std::format(L"{:04d}{:02d}{:02d}_{:02d}{:02d}{:02d}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-                           tm.tm_hour, tm.tm_min, tm.tm_sec);
+        auto tt = std::chrono::system_clock::to_time_t(now);
+        std::tm tm{};
+        localtime_s(&tm, &tt);
+        std::ostringstream ss;
+        ss << std::setfill('0') << std::setw(4) << (tm.tm_year + 1900) << std::setw(2) << (tm.tm_mon + 1)
+           << std::setw(2) << tm.tm_mday << "_" << std::setw(2) << tm.tm_hour << std::setw(2) << tm.tm_min
+           << std::setw(2) << tm.tm_sec;
+        return ss.str();
     }
 
     [[nodiscard]] bool EnsureLogDirectory() const {
-        std::wstring homeDir = GetUserHomeDirectory();
+        std::string homeDir = GetUserHomeDirectory();
         if (homeDir.empty())
             return false;
 
-        std::wstring logDir = homeDir + L"\\RTDLogs";
+        std::string logDir = homeDir + "\\RTDLogs";
 
         // Create directory if it doesn't exist
-        if (DWORD attrs = GetFileAttributesW(logDir.c_str()); attrs == INVALID_FILE_ATTRIBUTES) {
-            if (!CreateDirectoryW(logDir.c_str(), nullptr)) {
+        DWORD attrs = GetFileAttributesA(logDir.c_str());
+        if (attrs == INVALID_FILE_ATTRIBUTES) {
+            if (!CreateDirectoryA(logDir.c_str(), nullptr)) {
                 return false;
             }
         }
@@ -80,13 +74,13 @@ class Logger {
         if (!EnsureLogDirectory())
             return;
 
-        std::wstring homeDir = GetUserHomeDirectory();
+        std::string homeDir = GetUserHomeDirectory();
         if (homeDir.empty())
             return;
 
-        std::wstring logDir = homeDir + L"\\RTDLogs";
-        std::wstring fileName = std::format(L"RTD_{}.log", GetFileTimestamp());
-        m_logFilePath = logDir + L"\\" + fileName;
+        std::string logDir = homeDir + "\\RTDLogs";
+        std::string fileName = std::string("RTD_") + GetFileTimestamp() + ".log";
+        m_logFilePath = logDir + "\\" + fileName;
 
         // Open log file
         m_logFile.open(m_logFilePath, std::ios::out | std::ios::app);
@@ -110,34 +104,34 @@ class Logger {
     void WriteHeader() {
         if (!m_enabled)
             return;
-        std::lock_guard lock(m_mutex);
+        std::lock_guard<std::mutex> lock(m_mutex);
 
         m_logFile << "========================================\n";
         m_logFile << "RTD Server Log - Session Started\n";
-        m_logFile << "Timestamp: " << WideToUtf8(GetTimestamp()) << "\n";
+        m_logFile << "Timestamp: " << GetTimestamp() << "\n";
         m_logFile << "========================================\n\n";
         m_logFile.flush();
     }
 
-    void LogInfo(const std::wstring &message) {
+    void LogInfo(const std::string &message) {
         if (!m_enabled)
             return;
         std::lock_guard lock(m_mutex);
-        std::wstring timestamp = GetTimestamp();
-        std::wstring logLine = std::format(L"[{}] INFO: {}\n", timestamp, message);
-        m_logFile << WideToUtf8(logLine);
+        std::string timestamp = GetTimestamp();
+        std::string logLine = "[" + timestamp + "] INFO: " + message + "\n";
+        m_logFile << logLine;
         m_logFile.flush();
     }
 
-    void LogSubscription(long topicId, const std::wstring &url, const std::wstring &topic) {
+    void LogSubscription(long topicId, const std::string &url, const std::string &topic) {
         if (!m_enabled)
             return;
 
-        std::wstring message;
-        if (url.starts_with(L"ws://") || url.starts_with(L"wss://")) {
-            message = std::format(L"SUBSCRIBE: TopicID={}, URL='{}', Topic='{}'", topicId, url, topic);
+        std::string message;
+        if (url.starts_with("ws://") || url.starts_with("wss://")) {
+            message = "SUBSCRIBE: TopicID=" + std::to_string(topicId) + ", URL='" + url + "', Topic='" + topic + "'";
         } else {
-            message = std::format(L"SUBSCRIBE: TopicID={}, Mode=LEGACY, Param='{}'", topicId, url);
+            message = "SUBSCRIBE: TopicID=" + std::to_string(topicId) + ", Mode=LEGACY, Param='" + url + "'";
         }
         LogInfo(message);
     }
@@ -145,68 +139,61 @@ class Logger {
     void LogUnsubscribe(long topicId) {
         if (!m_enabled)
             return;
-        LogInfo(std::format(L"UNSUBSCRIBE: TopicID={}", topicId));
+        LogInfo(std::string("UNSUBSCRIBE: TopicID=") + std::to_string(topicId));
     }
 
-    void LogDataReceived(long topicId, double value, const std::wstring &source) {
+    void LogDataReceived(long topicId, double value, const std::string &source) {
         if (!m_enabled)
             return;
-        LogInfo(std::format(L"DATA_RECEIVED: TopicID={}, Value={:.4f}, Source='{}'", topicId, value, source));
+        std::ostringstream ss;
+        ss << "DATA_RECEIVED: TopicID=" << topicId << ", Value=" << std::fixed << std::setprecision(4) << value
+           << ", Source='" << source << "'";
+        LogInfo(ss.str());
     }
 
-    void LogWebSocketConnect(const std::wstring &url) {
+    void LogWebSocketConnect(const std::string &url) {
         if (!m_enabled)
             return;
-        LogInfo(std::format(L"WEBSOCKET_CONNECT: URL='{}'", url));
+        LogInfo(std::string("WEBSOCKET_CONNECT: URL='") + url + "'");
     }
 
-    void LogWebSocketDisconnect(const std::wstring &url) {
+    void LogWebSocketDisconnect(const std::string &url) {
         if (!m_enabled)
             return;
-        LogInfo(std::format(L"WEBSOCKET_DISCONNECT: URL='{}'", url));
+        LogInfo(std::string("WEBSOCKET_DISCONNECT: URL='") + url + "'");
     }
 
-    void LogWebSocketMessage(const std::wstring &url, const std::string &message) {
+    void LogWebSocketMessage(const std::string &url, const std::string &message) {
         if (!m_enabled)
             return;
-
-        // Convert message to wstring for logging
-        std::wstring wMessage(message.begin(), message.end());
-        LogInfo(std::format(L"WEBSOCKET_MESSAGE: URL='{}', Data='{}'", url, wMessage));
+        LogInfo(std::string("WEBSOCKET_MESSAGE: URL='") + url + "', Data='" + message + "'");
     }
 
     void LogServerStart() {
         if (!m_enabled)
             return;
-        LogInfo(L"SERVER_START: RTD Server initialized");
+        LogInfo("SERVER_START: RTD Server initialized");
     }
 
     void LogServerTerminate() {
         if (!m_enabled)
             return;
-        LogInfo(L"SERVER_TERMINATE: RTD Server shutting down");
+        LogInfo("SERVER_TERMINATE: RTD Server shutting down");
     }
-    void LogError(const std::wstring &error) {
+    void LogError(const std::string &error) {
         if (!m_enabled)
             return;
-        std::lock_guard lock(m_mutex);
-        std::wstring timestamp = GetTimestamp();
-        std::wstring logLine = std::format(L"[{}] ERROR: {}\n", timestamp, error);
-        m_logFile << WideToUtf8(logLine);
+        std::lock_guard<std::mutex> lock(m_mutex);
+        std::string timestamp = GetTimestamp();
+        std::string logLine = "[" + timestamp + "] ERROR: " + error + "\n";
+        m_logFile << logLine;
         m_logFile.flush();
     }
-    void LogError(const std::string &error) { LogError(ConvertToWString(error.c_str())); }
+
+    // legacy overload
+    void LogError(const char *error) { LogError(std::string(error ? error : "")); }
 
   private:
-    static std::string WideToUtf8(const std::wstring &wstr) {
-        if (wstr.empty())
-            return "";
-
-        int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        std::string result(size - 1, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, result.data(), size, nullptr, nullptr);
-        return result;
-    }
 };
 
 // Global logger instance

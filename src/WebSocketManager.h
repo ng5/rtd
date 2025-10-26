@@ -6,17 +6,18 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <string>
-#include <vector>
-#include <thread>
 #include <random>
+#include <ranges>
+#include <string>
+#include <thread>
+#include <vector>
 #include <windows.h>
 
 // Custom window message for websocket updates
-#define WM_WEBSOCKET_DATA (WM_USER +100)
+#define WM_WEBSOCKET_DATA (WM_USER + 100)
 
 struct TopicSubscription {
-    std::wstring topicFilter;
+    std::string topicFilter;
     VARIANT cachedValue;
     bool hasNewData;
 
@@ -25,7 +26,7 @@ struct TopicSubscription {
 };
 
 struct ConnectionData {
-    std::wstring url;
+    std::string url;
     std::atomic<bool> connected;
     std::atomic<bool> shouldStop;
     std::map<long, std::shared_ptr<TopicSubscription>> topics;
@@ -38,17 +39,17 @@ struct ConnectionData {
 // This adds a background worker that generates synthetic values so the RTD pipeline ticks
 // for WebSocket topics while you replace with a full WebSocket implementation later.
 class WebSocketManager {
-public:
-    WebSocketManager() : m_notifyWindow(nullptr), m_workerRunning(false), m_rng(static_cast<unsigned int>(GetTickCount())) {}
+  public:
+    WebSocketManager() : m_workerRunning(false), m_rng(static_cast<unsigned int>(GetTickCount())) {}
     ~WebSocketManager() { Shutdown(); }
 
     void SetNotifyWindow(HWND hwnd) { m_notifyWindow.store(hwnd, std::memory_order_relaxed); }
     void SetCallback(IRTDUpdateEvent *callback) { m_callback = callback; }
 
     // Return true if connection established (or existing connection ready), false on immediate failure
-    bool Subscribe(long topicId, const std::wstring &url, const std::wstring &topicFilter) {
+    bool Subscribe(long topicId, const std::string &url, const std::string &topicFilter) {
         try {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard lock(m_mutex);
 
             auto subscription = std::make_shared<TopicSubscription>();
             subscription->topicFilter = topicFilter;
@@ -80,17 +81,19 @@ public:
 
     void Unsubscribe(long topicId) {
         try {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard lock(m_mutex);
             auto urlIt = m_topicToUrl.find(topicId);
-            if (urlIt == m_topicToUrl.end()) return;
-            std::wstring url = urlIt->second;
+            if (urlIt == m_topicToUrl.end())
+                return;
+            std::string url = urlIt->second;
             m_topicToUrl.erase(urlIt);
 
             auto connIt = m_connections.find(url);
-            if (connIt == m_connections.end()) return;
+            if (connIt == m_connections.end())
+                return;
 
             {
-                std::lock_guard<std::mutex> tlock(connIt->second->topicsMutex);
+                std::lock_guard tlock(connIt->second->topicsMutex);
                 connIt->second->topics.erase(topicId);
                 if (connIt->second->topics.empty()) {
                     m_connections.erase(connIt);
@@ -103,14 +106,16 @@ public:
 
     void GetAllNewData(std::map<long, VARIANT> &updates) {
         try {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            for (auto &pair : m_connections) {
-                auto conn = pair.second;
+            std::lock_guard lock(m_mutex);
+            for (auto &val : m_connections | std::views::values) {
+                auto conn = val;
                 std::lock_guard<std::mutex> tlock(conn->topicsMutex);
                 for (auto &p : conn->topics) {
                     auto sub = p.second;
                     if (sub->hasNewData) {
-                        VARIANT v; VariantInit(&v); VariantCopy(&v, &sub->cachedValue);
+                        VARIANT v;
+                        VariantInit(&v);
+                        VariantCopy(&v, &sub->cachedValue);
                         updates[p.first] = v;
                         sub->hasNewData = false;
                     }
@@ -125,14 +130,14 @@ public:
         // stop worker first
         StopWorker();
 
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard lock(m_mutex);
         m_connections.clear();
         m_topicToUrl.clear();
     }
 
-private:
-    std::map<std::wstring, std::shared_ptr<ConnectionData>> m_connections;
-    std::map<long, std::wstring> m_topicToUrl;
+  private:
+    std::map<std::string, std::shared_ptr<ConnectionData>> m_connections;
+    std::map<long, std::string> m_topicToUrl;
     std::mutex m_mutex;
     std::atomic<HWND> m_notifyWindow{nullptr};
     CComPtr<IRTDUpdateEvent> m_callback;
@@ -155,58 +160,63 @@ private:
         bool expected = true;
         if (m_workerRunning.compare_exchange_strong(expected, false)) {
             if (m_worker.joinable()) {
-                try { m_worker.join(); } catch (...) {}
+                try {
+                    m_worker.join();
+                } catch (...) {
+                }
             }
         }
     }
 
     void WorkerLoop() {
-        std::uniform_real_distribution<double> dist(0.0,100.0);
+        std::uniform_real_distribution<double> dist(0.0, 100.0);
         while (m_workerRunning) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
             // snapshot connections
             std::vector<std::pair<std::shared_ptr<ConnectionData>, std::vector<long>>> snapshot;
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                for (auto &pair : m_connections) {
-                    auto conn = pair.second;
+                std::lock_guard lock(m_mutex);
+                for (auto &val : m_connections | std::views::values) {
+                    auto conn = val;
                     std::vector<long> topicIds;
                     {
-                        std::lock_guard<std::mutex> tlock(conn->topicsMutex);
-                        for (auto &p : conn->topics) topicIds.push_back(p.first);
+                        std::lock_guard tlock(conn->topicsMutex);
+                        for (const auto &key : conn->topics | std::views::keys)
+                            topicIds.push_back(key);
                     }
-                    if (!topicIds.empty()) snapshot.emplace_back(conn, std::move(topicIds));
+                    if (!topicIds.empty())
+                        snapshot.emplace_back(conn, std::move(topicIds));
                 }
             }
 
             bool anyUpdate = false;
-            for (auto &entry : snapshot) {
-                auto conn = entry.first;
-                for (long tid : entry.second) {
+            for (auto &[fst, snd] : snapshot) {
+                auto conn = fst;
+                for (long tid : snd) {
                     double value = dist(m_rng);
-                    std::lock_guard<std::mutex> tlock(conn->topicsMutex);
-                    auto it = conn->topics.find(tid);
-                    if (it != conn->topics.end()) {
+                    std::lock_guard tlock(conn->topicsMutex);
+                    if (auto it = conn->topics.find(tid); it != conn->topics.end()) {
                         VariantClear(&it->second->cachedValue);
                         it->second->cachedValue.vt = VT_R8;
                         it->second->cachedValue.dblVal = value;
                         it->second->hasNewData = true;
                         anyUpdate = true;
-                        GetLogger().LogDataReceived(tid, value, L"WebSocket(stub)");
+                        GetLogger().LogDataReceived(tid, value, "WebSocket(stub)");
                     }
                 }
             }
 
             if (anyUpdate) {
-                HWND hwnd = m_notifyWindow.load(std::memory_order_relaxed);
-                if (hwnd && IsWindow(hwnd)) {
-                    PostMessage(hwnd, WM_WEBSOCKET_DATA,0,0);
+                if (HWND hwnd = m_notifyWindow.load(std::memory_order_relaxed); hwnd && IsWindow(hwnd)) {
+                    PostMessage(hwnd, WM_WEBSOCKET_DATA, 0, 0);
                 } else {
                     // fallback: if callback set, call UpdateNotify directly
-                    CComPtr<IRTDUpdateEvent> cb = m_callback;
-                    if (cb) {
-                        try { cb->UpdateNotify(); } catch (...) {}
+                    if (CComPtr<IRTDUpdateEvent> cb = m_callback) {
+                        try {
+                            cb->UpdateNotify();
+                        } catch (...) {
+                        }
                     }
                 }
             }

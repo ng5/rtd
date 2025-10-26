@@ -66,14 +66,13 @@ class WebSocketDataSource : public IDataSource {
         GetLogger().LogSubscription(topicId, params.param1, params.param2);
 
         // Try to subscribe; WebSocketManager will attempt connection and return false on immediate failure
-        bool ok = m_wsManager.Subscribe(topicId, params.param1, params.param2);
-        if (!ok) {
+        if (bool ok = m_wsManager.Subscribe(topicId, params.param1, params.param2); !ok) {
             // Build wide string message and log
-            std::wstring msg = L"WEBSOCKET SUBSCRIBE FAILED: URL='";
+            std::string msg = "WEBSOCKET SUBSCRIBE FAILED: URL='";
             msg += params.param1;
-            msg += L"', Topic='";
+            msg += "', Topic='";
             msg += params.param2;
-            msg += L"'";
+            msg += "'";
             GetLogger().LogError(msg);
             return false;
         }
@@ -102,7 +101,7 @@ class WebSocketDataSource : public IDataSource {
                 update.value = snd.dblVal;
                 updates.push_back(update);
 
-                GetLogger().LogDataReceived(fst, snd.dblVal, L"WebSocket");
+                GetLogger().LogDataReceived(fst, snd.dblVal, "WebSocket");
             }
             VariantClear(&snd);
         }
@@ -112,7 +111,7 @@ class WebSocketDataSource : public IDataSource {
 
     bool CanHandle(const TopicParams &params) const override {
         // Check if param1 starts with ws:// or wss://
-        return params.param1.find(L"ws://") == 0 || params.param1.find(L"wss://") == 0;
+        return params.param1.starts_with("ws://") || params.param1.starts_with("wss://");
     }
 
     void Shutdown() override {
@@ -121,5 +120,5 @@ class WebSocketDataSource : public IDataSource {
         m_wsManager.Shutdown();
     }
 
-    std::wstring GetSourceName() const override { return L"WebSocket"; }
+    std::string GetSourceName() const override { return "WebSocket"; }
 };

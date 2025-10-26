@@ -1,6 +1,5 @@
 #pragma once
 #include <functional>
-#include <map>
 #include <string>
 #include <vector>
 #include <windows.h>
@@ -10,8 +9,8 @@ using DataAvailableCallback = std::function<void()>;
 
 // Structure to hold topic subscription parameters
 struct TopicParams {
-    std::wstring param1; // e.g., URL for WebSocket, topic name for Legacy
-    std::wstring param2; // e.g., topic filter for WebSocket
+    std::string param1; // e.g., URL for WebSocket, topic name for Legacy (ASCII)
+    std::string param2; // e.g., topic filter for WebSocket (ASCII)
 };
 
 // Structure to hold updated data
@@ -48,5 +47,5 @@ class IDataSource {
     virtual void Shutdown() = 0;
 
     // Get a descriptive name for logging
-    [[nodiscard]] virtual std::wstring GetSourceName() const = 0;
+    [[nodiscard]] virtual std::string GetSourceName() const = 0;
 };
