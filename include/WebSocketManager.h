@@ -20,7 +20,7 @@
 
 struct TopicSubscription {
     std::string topicFilter;
-    VARIANT cachedValue;
+    VARIANT cachedValue{};
     bool hasNewData;
 
     TopicSubscription() : hasNewData(false) { VariantInit(&cachedValue); }
@@ -31,7 +31,7 @@ struct ConnectionData {
     std::string url;
     std::atomic<bool> connected;
     std::atomic<bool> shouldStop;
-    std::map<long, std::shared_ptr<TopicSubscription>> topics;
+    std::map<long, std::shared_ptr<TopicSubscription>> topics{};
     std::mutex topicsMutex;
 
     ConnectionData() : connected(false), shouldStop(false) {}
@@ -137,17 +137,17 @@ class WebSocketManager {
     }
 
   private:
-    std::map<std::string, std::shared_ptr<ConnectionData>> m_connections;
-    std::map<long, std::string> m_topicToUrl;
+    std::map<std::string, std::shared_ptr<ConnectionData>> m_connections{};
+    std::map<long, std::string> m_topicToUrl{};
     std::mutex m_mutex;
     std::atomic<HWND> m_notifyWindow{nullptr};
-    CComPtr<IRTDUpdateEvent> m_callback;
+    CComPtr<IRTDUpdateEvent> m_callback{};
 
     // Background worker to generate synthetic ticks
     std::thread m_worker;
     std::atomic<bool> m_workerRunning;
     std::mutex m_workerMutex;
-    std::mt19937 m_rng;
+    std::mt19937 m_rng{};
 
     void StartWorkerIfNeeded() {
         bool expected = false;
