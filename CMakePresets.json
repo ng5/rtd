@@ -6,18 +6,7 @@
     },
     "configurePresets": [
       {
-        "name": "x64-release",
-        "generator": "Visual Studio 17 2022",
-        "binaryDir": "build",
-        "architecture": {
-          "value": "x64"
-        },
-        "environment": {
-          "CONDA_PREFIX": "E:\\miniconda3\\envs\\rtd"
-        }
-      },
-      {
-        "name": "x64-debug",
+        "name": "x64",
         "generator": "Visual Studio 17 2022",
         "binaryDir": "build",
         "architecture": {
@@ -30,13 +19,13 @@
     ],
     "buildPresets": [
       {
-        "name": "build-x64-RelWithDebInfo",
-        "configurePreset": "x64-release",
+        "name": "x64-RelWithDebInfo",
+        "configurePreset": "x64",
         "configuration": "RelWithDebInfo"
       },
       {
-        "name": "build-x64-Debug",
-        "configurePreset": "x64-debug",
+        "name": "x64-Debug",
+        "configurePreset": "x64",
         "configuration": "Debug"
       }
     ]
