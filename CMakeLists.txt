@@ -57,7 +57,7 @@ endif()
 
 add_library(RtdTickCPP SHARED ${SRC})
 target_include_directories(RtdTickCPP PRIVATE ${MIDL_OUT_DIR} ${CMAKE_SOURCE_DIR}/res)
-target_link_libraries(RtdTickCPP PRIVATE ole32 oleaut32 uuid user32 winhttp)
+target_link_libraries(RtdTickCPP PRIVATE websockets ole32 oleaut32 uuid user32)
 set_target_properties(RtdTickCPP PROPERTIES OUTPUT_NAME "MyRtd")
 
 file(GLOB TESTS tests/*.cpp)
