@@ -9,9 +9,12 @@
             "name": "x64-release",
             "generator": "Visual Studio 17 2022",
             "binaryDir": "build",
-            "architecture": {
-                "value": "x64"
-            }
+          "architecture": {
+            "value": "x64"
+          },
+          "environment": {
+            "CONDA_PREFIX": "E:\\miniconda3\\envs\\rtd"
+          }
         }
     ],
     "buildPresets": [
