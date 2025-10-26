@@ -90,7 +90,7 @@ IDataSource (Abstract Interface)
 ```
 
 **Key Design Principles:**
-- **Data sources are COM-agnostic**: They only deal with C++ types (long, double, std::wstring)
+- **Data sources are COM-agnostic**: They only deal with C++ types (long, double, std::string)
 - **RtdTick is the only class touching Excel COM**: All VARIANT, SAFEARRAY, IRTDUpdateEvent code is isolated here
 - **Easy extensibility**: Adding a new data source requires only implementing `IDataSource` interface and registering it
 - **Clear responsibilities**: Each class has a single, well-defined purpose
