@@ -1,5 +1,7 @@
 name: windows-build
-on: [push, pull_request]
+on:
+  label:
+    types: [created, edited]
 jobs:
   build:
     runs-on: windows-latest
