@@ -1,7 +1,8 @@
 name: windows-build
 on:
-  label:
-    types: [created, edited]
+  push:
+    tags:
+    - '*'
 jobs:
   build:
     runs-on: windows-latest
