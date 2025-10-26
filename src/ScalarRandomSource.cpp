@@ -1,13 +1,16 @@
 #include "ScalarRandomSource.h"
 #include <IDataSource.h>
 #include <Logger.h>
+#include <Windows.h>
 #include <atlbase.h>
 #include <atlwin.h>
 #include <exception>
 #include <memory>
 #include <random>
 #include <set>
+#include <string>
 #include <sysinfoapi.h>
+#include <vector>
 
 class ScalarRandomTimerWindow : public CWindowImpl<ScalarRandomTimerWindow, CWindow, CWinTraits<>> {
     DataAvailableCallback m_callback{};
