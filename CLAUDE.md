@@ -9,7 +9,7 @@ This is a Real-Time Data (RTD) server for Excel that streams data from WebSocket
 Key features:
 - WebSocket client using WinHTTP API
 - Multi-topic support (multiple concurrent WebSocket subscriptions)
-- JSON message parsing using nlohmann/json
+- JSON message parsing using simdjson
 - Thread-safe operation with proper STA marshaling
 
 ## Build System

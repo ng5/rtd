@@ -1,5 +1,7 @@
 #pragma once
 #include "Logger.h"
+#include "RtdTickLib_i.h"
+
 #include <atlbase.h>
 #include <atlcom.h>
 #include <atomic>

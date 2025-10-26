@@ -36,17 +36,18 @@ configure_file(${CMAKE_SOURCE_DIR}/res/RtdTick.rc.in
         ${CMAKE_BINARY_DIR}/RtdTick_gen.rc @ONLY)
 
 # --- Sources ---
-set(SRC
-        src/dllmain.cpp
-        src/dllmain.h
-        src/RtdTick.cpp
-        src/third_party/simdjson.cpp
+file( GLOB SRC
+        src/*.cpp
+        include/third_party/simdjson.cpp
         ${CMAKE_BINARY_DIR}/RtdTick_gen.rc
         ${MIDL_OUT_DIR}/RtdTickLib_i.c
         MyRtd.def
 )
-
 add_library(RtdTickCPP SHARED ${SRC})
+target_include_directories(RtdTickCPP PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/include/third_party
+)
 add_dependencies(RtdTickCPP midl_gen)
 
 target_include_directories(RtdTickCPP PRIVATE
