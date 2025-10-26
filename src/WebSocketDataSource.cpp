@@ -70,11 +70,11 @@ std::vector<TopicUpdate> WebSocketDataSource::GetNewData() {
     std::vector<TopicUpdate> updates;
     std::map<long, VARIANT> wsUpdates;
     pImpl->wsManager.GetAllNewData(wsUpdates);
-    for (auto &p : wsUpdates) {
-        VARIANT &v = p.second;
+    for (auto &[fst, snd] : wsUpdates) {
+        auto &v = snd;
         if (v.vt == VT_R8) {
-            updates.push_back(TopicUpdate{p.first, v.dblVal});
-            GetLogger().LogDataReceived(p.first, v.dblVal, "WebSocket");
+            updates.emplace_back(TopicUpdate{.topicId = fst, .value = v.dblVal});
+            GetLogger().LogDataReceived(fst, v.dblVal, "WebSocket");
         }
         VariantClear(&v);
     }

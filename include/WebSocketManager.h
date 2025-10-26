@@ -66,7 +66,7 @@ class WebSocketManager {
                 conn->topics[topicId] = subscription;
                 m_connections[url] = conn;
             } else {
-                std::lock_guard<std::mutex> tlock(it->second->topicsMutex);
+                std::lock_guard tlock(it->second->topicsMutex);
                 it->second->topics[topicId] = subscription;
             }
 
@@ -87,7 +87,7 @@ class WebSocketManager {
             auto urlIt = m_topicToUrl.find(topicId);
             if (urlIt == m_topicToUrl.end())
                 return;
-            std::string url = urlIt->second;
+            auto &url = urlIt->second;
             m_topicToUrl.erase(urlIt);
 
             auto connIt = m_connections.find(url);
@@ -110,16 +110,15 @@ class WebSocketManager {
         try {
             std::lock_guard lock(m_mutex);
             for (auto &val : m_connections | std::views::values) {
-                auto conn = val;
-                std::lock_guard<std::mutex> tlock(conn->topicsMutex);
-                for (auto &p : conn->topics) {
-                    auto sub = p.second;
-                    if (sub->hasNewData) {
+                const auto &conn = val;
+                std::lock_guard tlock(conn->topicsMutex);
+                for (auto &[fst, snd] : conn->topics) {
+                    if (snd->hasNewData) {
                         VARIANT v;
                         VariantInit(&v);
-                        VariantCopy(&v, &sub->cachedValue);
-                        updates[p.first] = v;
-                        sub->hasNewData = false;
+                        VariantCopy(&v, &snd->cachedValue);
+                        updates[fst] = v;
+                        snd->hasNewData = false;
                     }
                 }
             }
@@ -159,8 +158,7 @@ class WebSocketManager {
     }
 
     void StopWorker() {
-        bool expected = true;
-        if (m_workerRunning.compare_exchange_strong(expected, false)) {
+        if (auto expected = true; m_workerRunning.compare_exchange_strong(expected, false)) {
             if (m_worker.joinable()) {
                 try {
                     m_worker.join();
@@ -176,12 +174,12 @@ class WebSocketManager {
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
             // snapshot connections
-            std::vector<std::pair<std::shared_ptr<ConnectionData>, std::vector<long>>> snapshot;
+            auto snapshot = std::vector<std::pair<std::shared_ptr<ConnectionData>, std::vector<long>>>{};
             {
                 std::lock_guard lock(m_mutex);
                 for (auto &val : m_connections | std::views::values) {
-                    auto conn = val;
-                    std::vector<long> topicIds;
+                    auto &conn = val;
+                    auto topicIds = std::vector<long>{};
                     {
                         std::lock_guard tlock(conn->topicsMutex);
                         for (const auto &key : conn->topics | std::views::keys)
@@ -194,7 +192,7 @@ class WebSocketManager {
 
             bool anyUpdate = false;
             for (auto &[fst, snd] : snapshot) {
-                auto conn = fst;
+                auto &conn = fst;
                 for (long tid : snd) {
                     double value = dist(m_rng);
                     std::lock_guard tlock(conn->topicsMutex);
@@ -214,10 +212,11 @@ class WebSocketManager {
                     PostMessage(hwnd, WM_WEBSOCKET_DATA, 0, 0);
                 } else {
                     // fallback: if callback set, call UpdateNotify directly
-                    if (CComPtr<IRTDUpdateEvent> cb = m_callback) {
+                    if (auto &cb = m_callback) {
                         try {
                             cb->UpdateNotify();
-                        } catch (...) {
+                        } catch (const std::exception &e) {
+                            GetLogger().LogError(e.what());
                         }
                     }
                 }

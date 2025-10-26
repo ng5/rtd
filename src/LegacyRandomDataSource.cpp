@@ -83,8 +83,8 @@ void LegacyRandomDataSource::Unsubscribe(long topicId) {
 
 std::vector<TopicUpdate> LegacyRandomDataSource::GetNewData() {
     std::vector<TopicUpdate> updates;
-    for (long topicId : pImpl->topics) {
-        TopicUpdate u{.topicId = topicId, .value = pImpl->NextRand()};
+    for (auto topicId : pImpl->topics) {
+        auto u = TopicUpdate{.topicId = topicId, .value = pImpl->NextRand()};
         updates.push_back(u);
         GetLogger().LogDataReceived(topicId, u.value, "Legacy");
     }

@@ -11,9 +11,6 @@
             "binaryDir": "build",
             "architecture": {
                 "value": "x64"
-            },
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
@@ -22,9 +19,6 @@
             "binaryDir": "build",
             "architecture": {
                 "value": "x64"
-            },
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
             }
         }
     ],

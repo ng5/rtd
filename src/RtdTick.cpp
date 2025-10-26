@@ -4,6 +4,7 @@
 #include "RtdTickLib_i.h"
 #include "WebSocketDataSource.h"
 #include "resource.h"
+#include <array>
 #include <atlbase.h>
 #include <atlcom.h>
 #include <atlsafe.h>
@@ -63,10 +64,10 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
             return E_POINTER;
 
         // Parse parameters from Excel
-        TopicParams params = ParseTopicParams(*strings);
+        auto params = ParseTopicParams(*strings);
 
         // Find appropriate data source
-        IDataSource *source = FindDataSource(params);
+        auto *source = FindDataSource(params);
         if (!source) {
             return E_INVALIDARG;
         }
@@ -103,7 +104,7 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
         // Collect updates from all data sources
         std::vector<TopicUpdate> allUpdates;
         for (auto &source : m_dataSources) {
-            std::vector<TopicUpdate> updates = source->GetNewData();
+            auto updates = source->GetNewData();
             allUpdates.insert(allUpdates.end(), updates.begin(), updates.end());
         }
 
@@ -114,11 +115,11 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
         }
 
         // Build 2D SAFEARRAY for Excel
-        CComSafeArrayBound bounds[2];
+        auto bounds = std::array<CComSafeArrayBound, 2>{};
         bounds[0].SetCount(2);                                     // rows (topic ID, value)
         bounds[1].SetCount(static_cast<ULONG>(allUpdates.size())); // columns
         CComSafeArray<VARIANT> sa;
-        if (FAILED(sa.Create(bounds, 2)))
+        if (FAILED(sa.Create(bounds.data(), 2)))
             return E_FAIL;
 
         LONG col = 0;
@@ -242,7 +243,7 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
         auto notifyCallback = [this]() {
             try {
                 // Snapshot the COM pointer to avoid races with FinalRelease
-                CComPtr<IRTDUpdateEvent> cb = m_callback;
+                auto cb = m_callback;
                 if (!m_stopping && cb) {
                     cb->UpdateNotify();
                 }

@@ -52,14 +52,14 @@ class Logger {
     }
 
     [[nodiscard]] bool EnsureLogDirectory() const {
-        std::string homeDir = GetUserHomeDirectory();
+        auto homeDir = GetUserHomeDirectory();
         if (homeDir.empty())
             return false;
 
-        std::string logDir = homeDir + "\\RTDLogs";
+        auto logDir = homeDir + "\\RTDLogs";
 
         // Create directory if it doesn't exist
-        DWORD attrs = GetFileAttributesA(logDir.c_str());
+        auto attrs = GetFileAttributesA(logDir.c_str());
         if (attrs == INVALID_FILE_ATTRIBUTES) {
             if (!CreateDirectoryA(logDir.c_str(), nullptr)) {
                 return false;
@@ -74,12 +74,12 @@ class Logger {
         if (!EnsureLogDirectory())
             return;
 
-        std::string homeDir = GetUserHomeDirectory();
+        auto homeDir = GetUserHomeDirectory();
         if (homeDir.empty())
             return;
 
-        std::string logDir = homeDir + "\\RTDLogs";
-        std::string fileName = std::string("RTD_") + GetFileTimestamp() + ".log";
+        auto logDir = homeDir + "\\RTDLogs";
+        auto fileName = std::string("RTD_") + GetFileTimestamp() + ".log";
         m_logFilePath = logDir + "\\" + fileName;
 
         // Open log file
@@ -104,7 +104,7 @@ class Logger {
     void WriteHeader() {
         if (!m_enabled)
             return;
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard lock(m_mutex);
 
         m_logFile << "========================================\n";
         m_logFile << "RTD Server Log - Session Started\n";
@@ -117,8 +117,8 @@ class Logger {
         if (!m_enabled)
             return;
         std::lock_guard lock(m_mutex);
-        std::string timestamp = GetTimestamp();
-        std::string logLine = "[" + timestamp + "] INFO: " + message + "\n";
+        auto timestamp = GetTimestamp();
+        auto logLine = "[" + timestamp + "] INFO: " + message + "\n";
         m_logFile << logLine;
         m_logFile.flush();
     }
@@ -127,7 +127,7 @@ class Logger {
         if (!m_enabled)
             return;
 
-        std::string message;
+        auto message = std::string{};
         if (url.starts_with("ws://") || url.starts_with("wss://")) {
             message = "SUBSCRIBE: TopicID=" + std::to_string(topicId) + ", URL='" + url + "', Topic='" + topic + "'";
         } else {
@@ -145,7 +145,7 @@ class Logger {
     void LogDataReceived(long topicId, double value, const std::string &source) {
         if (!m_enabled)
             return;
-        std::ostringstream ss;
+        auto ss = std::ostringstream{};
         ss << "DATA_RECEIVED: TopicID=" << topicId << ", Value=" << std::fixed << std::setprecision(4) << value
            << ", Source='" << source << "'";
         LogInfo(ss.str());
@@ -183,9 +183,9 @@ class Logger {
     void LogError(const std::string &error) {
         if (!m_enabled)
             return;
-        std::lock_guard<std::mutex> lock(m_mutex);
-        std::string timestamp = GetTimestamp();
-        std::string logLine = "[" + timestamp + "] ERROR: " + error + "\n";
+        std::lock_guard lock(m_mutex);
+        auto timestamp = GetTimestamp();
+        auto logLine = "[" + timestamp + "] ERROR: " + error + "\n";
         m_logFile << logLine;
         m_logFile.flush();
     }
