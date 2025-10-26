@@ -1,0 +1,17 @@
+{
+  "version": "0.2.1",
+  "defaults": {},
+  "configurations": [
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "MyRtd.dll (Debug\\MyRtd.dll)",
+      "name": "Excel (Debug)",
+      "exe": "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+      "args": [ "C:\\Users\\inbox\\RTDClient.xlsx" ],
+      "currentDir": "${workspaceRoot}",
+      "externalConsole": false,
+      "stopAtEntry": false
+    }
+  ]
+}

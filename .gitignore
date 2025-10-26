@@ -1,3 +1,4 @@
+/.gitignore
 /build/
 /build32/
 /CMakeFiles/
@@ -12,5 +13,7 @@
 *.VC.db
 *.sdf
 *.opensdf
-/.vs/
 node_modules
+!.vs/
+.vs/*
+!.vs/launch.vs.json
