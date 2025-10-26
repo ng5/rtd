@@ -3,10 +3,10 @@
 #include "Logger.h"
 #include <memory>
 
-class ScalarRandomSource : public IDataSource {
+class ScalarSource : public IDataSource {
   public:
-    ScalarRandomSource();
-    ~ScalarRandomSource() override;
+    ScalarSource();
+    ~ScalarSource() override;
 
     void Initialize(DataAvailableCallback callback) override;
     bool Subscribe(long topicId, const TopicParams &params, double &initialValue) override;

@@ -1,4 +1,4 @@
-#include "ScalarRandomSource.h"
+#include "ScalarSource.h"
 #include <IDataSource.h>
 #include <Logger.h>
 #include <Windows.h>
@@ -12,11 +12,11 @@
 #include <sysinfoapi.h>
 #include <vector>
 
-class ScalarRandomTimerWindow : public CWindowImpl<ScalarRandomTimerWindow, CWindow, CWinTraits<>> {
+class ScalarTimerWindow : public CWindowImpl<ScalarTimerWindow, CWindow, CWinTraits<>> {
     DataAvailableCallback m_callback{};
 
   public:
-    BEGIN_MSG_MAP(ScalarRandomTimerWindow)
+    BEGIN_MSG_MAP(ScalarTimerWindow)
     MESSAGE_HANDLER(WM_TIMER, OnTimer)
     END_MSG_MAP()
 
@@ -42,8 +42,8 @@ class ScalarRandomTimerWindow : public CWindowImpl<ScalarRandomTimerWindow, CWin
     }
 };
 
-struct ScalarRandomSource::Impl {
-    ScalarRandomTimerWindow timerWindow;
+struct ScalarSource::Impl {
+    ScalarTimerWindow timerWindow;
     DataAvailableCallback callback;
     std::set<long> topics;
     std::mt19937_64 rng;
@@ -54,8 +54,8 @@ struct ScalarRandomSource::Impl {
     double NextRand() { return dist(rng) * 100.0; }
 };
 
-ScalarRandomSource::ScalarRandomSource() : pImpl(std::make_unique<Impl>()) {}
-ScalarRandomSource::~ScalarRandomSource() {
+ScalarSource::ScalarSource() : pImpl(std::make_unique<Impl>()) {}
+ScalarSource::~ScalarSource() {
     try {
         pImpl->timerWindow.StopTimer();
         if (pImpl->timerWindow.m_hWnd)
@@ -65,14 +65,14 @@ ScalarRandomSource::~ScalarRandomSource() {
     }
 }
 
-void ScalarRandomSource::Initialize(DataAvailableCallback callback) {
+void ScalarSource::Initialize(DataAvailableCallback callback) {
     pImpl->callback = callback;
     if (pImpl->timerWindow.CreateNow()) {
         pImpl->timerWindow.SetCallback(callback);
     }
 }
 
-bool ScalarRandomSource::Subscribe(long topicId, const TopicParams &params, double &initialValue) {
+bool ScalarSource::Subscribe(long topicId, const TopicParams &params, double &initialValue) {
     GetLogger().LogSubscription(topicId, params.param1, "");
     pImpl->topics.insert(topicId);
     if (pImpl->topics.size() == 1)
@@ -81,30 +81,29 @@ bool ScalarRandomSource::Subscribe(long topicId, const TopicParams &params, doub
     return true;
 }
 
-void ScalarRandomSource::Unsubscribe(long topicId) {
+void ScalarSource::Unsubscribe(long topicId) {
     GetLogger().LogUnsubscribe(topicId);
     pImpl->topics.erase(topicId);
     if (pImpl->topics.empty())
         pImpl->timerWindow.StopTimer();
 }
 
-std::vector<TopicUpdate> ScalarRandomSource::GetNewData() {
+std::vector<TopicUpdate> ScalarSource::GetNewData() {
     std::vector<TopicUpdate> updates;
     for (auto topicId : pImpl->topics) {
         auto u = TopicUpdate{.topicId = topicId, .value = pImpl->NextRand()};
         updates.push_back(u);
-        GetLogger().LogDataReceived(topicId, u.value, "ScalarRandom");
     }
     return updates;
 }
 
-bool ScalarRandomSource::CanHandle(const TopicParams &params) const {
+bool ScalarSource::CanHandle(const TopicParams &params) const {
     return !(params.param1.starts_with("ws://") || params.param1.starts_with("wss://"));
 }
 
-void ScalarRandomSource::Shutdown() {
+void ScalarSource::Shutdown() {
     pImpl->timerWindow.StopTimer();
     pImpl->topics.clear();
 }
 
-std::string ScalarRandomSource::GetSourceName() const { return "ScalarRandom"; }
+std::string ScalarSource::GetSourceName() const { return "ScalarRandom"; }

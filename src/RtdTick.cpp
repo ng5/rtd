@@ -1,7 +1,7 @@
 #include "IDataSource.h"
 #include "Logger.h"
 #include "RtdTickLib_i.h"
-#include "ScalarRandomSource.h"
+#include "ScalarSource.h"
 #include "resource.h"
 #include <WinNls.h>
 #include <array>
@@ -242,7 +242,7 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
         auto notifyCallback = [this]() {
             try {
                 // Snapshot the COM pointer to avoid races with FinalRelease
-                auto cb = m_callback;
+                auto &cb = m_callback;
                 if (!m_stopping && cb) {
                     cb->UpdateNotify();
                 }
@@ -254,7 +254,7 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
         };
 
         // Register Legacy random data source
-        auto legacySource = std::make_unique<ScalarRandomSource>();
+        auto legacySource = std::make_unique<ScalarSource>();
         legacySource->Initialize(notifyCallback);
         m_dataSources.push_back(std::move(legacySource));
     }
