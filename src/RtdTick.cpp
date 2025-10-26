@@ -2,6 +2,7 @@
 #include "Logger.h"
 #include "RtdTickLib_i.h"
 #include "ScalarSource.h"
+#include "WebSocketSource.h"
 #include "resource.h"
 #include <WinNls.h>
 #include <array>
@@ -254,9 +255,14 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
         };
 
         // Register Legacy random data source
-        auto legacySource = std::make_unique<ScalarSource>();
-        legacySource->Initialize(notifyCallback);
-        m_dataSources.push_back(std::move(legacySource));
+        auto scalarSource = std::make_unique<ScalarSource>();
+        scalarSource->Initialize(notifyCallback);
+        m_dataSources.emplace_back(std::move(scalarSource));
+
+        // Register Legacy random data source
+        auto webSocketSource = std::make_unique<WebSocketSource>();
+        webSocketSource->Initialize(notifyCallback);
+        m_dataSources.emplace_back(std::move(webSocketSource));
     }
 
     TopicParams ParseTopicParams(SAFEARRAY *sa) const {
