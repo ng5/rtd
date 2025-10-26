@@ -1,10 +1,14 @@
 #include "LegacyRandomDataSource.h"
+#include <IDataSource.h>
+#include <Logger.h>
 #include <atlbase.h>
 #include <atlwin.h>
+#include <exception>
+#include <memory>
 #include <random>
 #include <set>
+#include <sysinfoapi.h>
 
-// Timer window for legacy random data (private to cpp)
 class LegacyTimerWindow : public CWindowImpl<LegacyTimerWindow, CWindow, CWinTraits<>> {
     DataAvailableCallback m_callback{};
 

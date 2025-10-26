@@ -13,7 +13,6 @@
 #include <string>
 #include <vector>
 
-// Window for receiving WebSocket notifications
 class WebSocketNotifyWindow : public CWindowImpl<WebSocketNotifyWindow, CWindow, CWinTraits<>> {
     DataAvailableCallback m_callback{};
 

@@ -4,19 +4,22 @@
 #include "RtdTickLib_i.h"
 #include "WebSocketDataSource.h"
 #include "resource.h"
+#include <WinNls.h>
 #include <array>
 #include <atlbase.h>
 #include <atlcom.h>
+#include <atlcomcli.h>
 #include <atlsafe.h>
 #include <atomic>
 #include <exception>
 #include <map>
 #include <memory>
 #include <string>
+#include <stringapiset.h>
+#include <utility>
 #include <vector>
 #include <windows.h>
 
-// Helper to convert BSTR/wide to UTF-8 std::string (ASCII expected)
 static std::string WideToUtf8String(const BSTR bstr) {
     if (!bstr)
         return {};
@@ -28,9 +31,8 @@ static std::string WideToUtf8String(const BSTR bstr) {
     return out;
 }
 
-// {C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111}
 class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
-    : public CComObjectRootEx<CComSingleThreadModel>, // STA
+    : public CComObjectRootEx<CComSingleThreadModel>,
       public CComCoClass<RtdTick, &__uuidof(RtdTick)>,
       public IDispatchImpl<IRtdServer, &__uuidof(IRtdServer), &LIBID_RtdTickLib, 1, 0> {
   public:
@@ -41,7 +43,6 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
     COM_INTERFACE_ENTRY(IDispatch)
     END_COM_MAP()
 
-    // ---- IRtdServer ----
     STDMETHOD(ServerStart)(IRTDUpdateEvent *cb, long *result) override {
         if (!result)
             return E_POINTER;
@@ -49,7 +50,6 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
         m_callback = cb;
 
         GetLogger().LogServerStart();
-
         // Register available data sources (idempotent)
         if (!m_initialized.load(std::memory_order_acquire)) {
             RegisterDataSources();
@@ -117,8 +117,8 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
 
         // Build 2D SAFEARRAY for Excel
         auto bounds = std::array<CComSafeArrayBound, 2>{};
-        bounds[0].SetCount(2);                                     // rows (topic ID, value)
-        bounds[1].SetCount(static_cast<ULONG>(allUpdates.size())); // columns
+        bounds[0].SetCount(2);
+        bounds[1].SetCount(static_cast<ULONG>(allUpdates.size()));
         CComSafeArray<VARIANT> sa;
         if (FAILED(sa.Create(bounds.data(), 2)))
             return E_FAIL;
@@ -157,7 +157,6 @@ class DECLSPEC_UUID("C5D2C3F2-FA6B-4B3A-9B6E-7B8E07C54111") RtdTick
     STDMETHOD(DisconnectData)(long topicId) override {
         auto it = m_topicSources.find(topicId);
         if (it != m_topicSources.end()) {
-            // Guard against exceptions from data sources
             try {
                 it->second->Unsubscribe(topicId);
             } catch (const std::exception &e) {

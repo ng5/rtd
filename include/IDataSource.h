@@ -4,48 +4,33 @@
 #include <vector>
 #include <windows.h>
 
-// Callback for notifying when new data is available
 using DataAvailableCallback = std::function<void()>;
 
-// Structure to hold topic subscription parameters
 struct TopicParams {
-    std::string param1; // e.g., URL for WebSocket, topic name for Legacy (ASCII)
-    std::string param2; // e.g., topic filter for WebSocket (ASCII)
+    std::string param1;
+    std::string param2;
 };
 
-// Structure to hold updated data
 struct TopicUpdate {
     long topicId;
     double value;
 };
 
-// Abstract interface for data sources
 class IDataSource {
   public:
     virtual ~IDataSource() = default;
 
-    // Initialize the data source with a callback for when new data is available
     virtual void Initialize(DataAvailableCallback callback) = 0;
 
-    // Subscribe to a topic
-    // Returns initial value (0.0 if no immediate data available)
-    // Returns true if subscription succeeded
     virtual bool Subscribe(long topicId, const TopicParams &params, double &initialValue) = 0;
 
-    // Unsubscribe from a topic
     virtual void Unsubscribe(long topicId) = 0;
 
-    // Get all new data since last call
-    // Returns list of topic updates
     virtual std::vector<TopicUpdate> GetNewData() = 0;
 
-    // Check if this source can handle the given parameters
-    // This allows RtdTick to route subscriptions to the right source
     [[nodiscard]] virtual bool CanHandle(const TopicParams &params) const = 0;
 
-    // Shutdown the data source
     virtual void Shutdown() = 0;
 
-    // Get a descriptive name for logging
     [[nodiscard]] virtual std::string GetSourceName() const = 0;
 };

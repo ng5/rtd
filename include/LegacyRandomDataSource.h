@@ -3,7 +3,6 @@
 #include "Logger.h"
 #include <memory>
 
-// Legacy random number generator data source (declaration only). Implementation moved to .cpp
 class LegacyRandomDataSource : public IDataSource {
   public:
     LegacyRandomDataSource();

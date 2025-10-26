@@ -17,7 +17,7 @@ class Logger {
 
     static std::string GetUserHomeDirectory() {
         char path[MAX_PATH];
-        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, path))) {
+        if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_PROFILE, nullptr, 0, path))) {
             return {path};
         }
         return {};
@@ -58,7 +58,6 @@ class Logger {
 
         auto logDir = homeDir + "\\RTDLogs";
 
-        // Create directory if it doesn't exist
         auto attrs = GetFileAttributesA(logDir.c_str());
         if (attrs == INVALID_FILE_ATTRIBUTES) {
             if (!CreateDirectoryA(logDir.c_str(), nullptr)) {
@@ -82,7 +81,6 @@ class Logger {
         auto fileName = std::string("RTD_") + GetFileTimestamp() + ".log";
         m_logFilePath = logDir + "\\" + fileName;
 
-        // Open log file
         m_logFile.open(m_logFilePath, std::ios::out | std::ios::app);
         if (m_logFile.is_open()) {
             m_enabled = true;
@@ -190,13 +188,11 @@ class Logger {
         m_logFile.flush();
     }
 
-    // legacy overload
     void LogError(const char *error) { LogError(std::string(error ? error : "")); }
 
   private:
 };
 
-// Global logger instance
 inline Logger &GetLogger() {
     static Logger logger;
     return logger;
