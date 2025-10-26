@@ -54,10 +54,7 @@ endif()
 
 add_library(RtdTickCPP SHARED ${SRC})
 
-target_include_directories(RtdTickCPP PRIVATE
-        ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/include/third_party
-)
+include_directories(${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/include/third_party)
 
 target_include_directories(RtdTickCPP PRIVATE
         ${MIDL_OUT_DIR}
@@ -68,12 +65,10 @@ target_link_libraries(RtdTickCPP PRIVATE ole32 oleaut32 uuid user32 winhttp)
 
 set_target_properties(RtdTickCPP PROPERTIES OUTPUT_NAME "MyRtd")
 
-# --- Convenience targets ---
-add_custom_target(register
-        COMMAND regsvr32 /s /n /i:user "$<TARGET_FILE:RtdTickCPP>"
-        DEPENDS RtdTickCPP
-        COMMENT "Per-user COM registration (HKCU) of MyRtd.dll")
-
-add_custom_target(unregister
-        COMMAND regsvr32 /s /u /n /i:user "$<TARGET_FILE:RtdTickCPP>"
-        COMMENT "Per-user COM unregistration (HKCU) of MyRtd.dll")
+# Automatically register the built DLL after each build (post-build step)
+if(WIN32)
+    add_custom_command(TARGET RtdTickCPP POST_BUILD
+            COMMAND regsvr32 /s /n /i:user "$<TARGET_FILE:RtdTickCPP>"
+            COMMENT "Per-user COM registration (HKCU) of MyRtd.dll (post-build)"
+    )
+endif()

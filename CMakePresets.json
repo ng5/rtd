@@ -6,14 +6,6 @@
     },
     "configurePresets": [
         {
-            "name": "x64-debug",
-            "generator": "Visual Studio 17 2022",
-            "binaryDir": "build",
-            "architecture": {
-                "value": "x64"
-            }
-        },
-        {
             "name": "x64-release",
             "generator": "Visual Studio 17 2022",
             "binaryDir": "build",
@@ -23,15 +15,10 @@
         }
     ],
     "buildPresets": [
-        {
-            "name": "build-x64-release",
-            "configurePreset": "x64-release",
-            "configuration": "Release"
-        },
-        {
-          "name": "build-x64-debug",
-          "configurePreset": "x64-debug",
-          "configuration": "Debug"
-        }
+      {
+        "name": "build-x64-RelWithDebInfo",
+        "configurePreset": "x64-release",
+        "configuration": "RelWithDebInfo"
+      }
     ]
 }

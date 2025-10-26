@@ -1,11 +1,21 @@
 #include "WebSocketDataSource.h"
+#include <IDataSource.h>
+#include <Logger.h>
+#include <WebSocketManager.h>
+#include <Windows.h>
 #include <atlbase.h>
 #include <atlwin.h>
+#include <exception>
 #include <map>
+#include <memory>
+#include <oaidl.h>
+#include <oleauto.h>
+#include <string>
+#include <vector>
 
 // Window for receiving WebSocket notifications
 class WebSocketNotifyWindow : public CWindowImpl<WebSocketNotifyWindow, CWindow, CWinTraits<>> {
-    DataAvailableCallback m_callback;
+    DataAvailableCallback m_callback{};
 
   public:
     BEGIN_MSG_MAP(WebSocketNotifyWindow)

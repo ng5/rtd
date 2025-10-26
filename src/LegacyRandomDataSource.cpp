@@ -6,7 +6,7 @@
 
 // Timer window for legacy random data (private to cpp)
 class LegacyTimerWindow : public CWindowImpl<LegacyTimerWindow, CWindow, CWinTraits<>> {
-    DataAvailableCallback m_callback;
+    DataAvailableCallback m_callback{};
 
   public:
     BEGIN_MSG_MAP(LegacyTimerWindow)
